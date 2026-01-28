@@ -13,6 +13,12 @@ import ProfileScreen from '../screens/ProfileScreen';
 import QuizScreen from '../screens/QuizScreen';
 import LeaderboardScreen from '../screens/LeaderboardScreen';
 import AdminDashboardScreen from '../screens/AdminDashboardScreen';
+import StudentManagementScreen from '../screens/StudentManagementScreen';
+import ContentManagementScreen from '../screens/ContentManagementScreen';
+import LessonContentEditorScreen from '../screens/LessonContentEditorScreen';
+import QuizEditorScreen from '../screens/QuizEditorScreen';
+import AnalyticsScreen from '../screens/AnalyticsScreen';
+import StudentProgressScreen from '../screens/StudentProgressScreen';
 import { ActivityIndicator, View, TouchableOpacity, StyleSheet, Animated, Dimensions } from 'react-native';
 import { Text, useTheme } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -183,8 +189,14 @@ function MainTabs() {
 
 function AdminStack() {
     return (
-        <Stack.Navigator>
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
             <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
+            <Stack.Screen name="StudentManagement" component={StudentManagementScreen} />
+            <Stack.Screen name="ContentManagement" component={ContentManagementScreen} />
+            <Stack.Screen name="LessonContentEditor" component={LessonContentEditorScreen} />
+            <Stack.Screen name="QuizEditor" component={QuizEditorScreen} />
+            <Stack.Screen name="Analytics" component={AnalyticsScreen} />
+            <Stack.Screen name="StudentProgress" component={StudentProgressScreen} />
         </Stack.Navigator>
     );
 }
@@ -201,23 +213,56 @@ function AuthStack() {
 export default function AppNavigator() {
     const { session, setSession, setUser, user } = useAuthStore();
     const [loading, setLoading] = useState(true);
+    const [isAdmin, setIsAdmin] = useState(false);
 
     useEffect(() => {
         supabase.auth.getSession().then(({ data: { session } }) => {
             setSession(session);
-            if (session) setUser(session.user);
-            setLoading(false);
+            if (session) {
+                setUser(session.user);
+                // Check admin role from database
+                checkAdminRole(session.user.id);
+            } else {
+                setLoading(false);
+            }
         });
 
         const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
             setSession(session);
-            if (session) setUser(session.user);
-            else setUser(null);
-            setLoading(false);
+            if (session) {
+                setUser(session.user);
+                checkAdminRole(session.user.id);
+            } else {
+                setUser(null);
+                setIsAdmin(false);
+                setLoading(false);
+            }
         });
 
         return () => subscription.unsubscribe();
     }, []);
+
+    // Check admin role from database
+    const checkAdminRole = async (userId) => {
+        try {
+            const { data, error } = await supabase
+                .from('users')
+                .select('role')
+                .eq('id', userId)
+                .single();
+
+            if (data && data.role === 'admin') {
+                setIsAdmin(true);
+            } else {
+                setIsAdmin(false);
+            }
+        } catch (error) {
+            console.error('Error checking admin role:', error);
+            setIsAdmin(false);
+        } finally {
+            setLoading(false);
+        }
+    };
 
     if (loading) {
         return (
@@ -230,7 +275,7 @@ export default function AppNavigator() {
     return (
         <>
             {session ? (
-                user?.user_metadata?.role === 'admin' ? <AdminStack /> : <MainTabs />
+                isAdmin ? <AdminStack /> : <MainTabs />
             ) : (
                 <AuthStack />
             )}
