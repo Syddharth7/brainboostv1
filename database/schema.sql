@@ -8,6 +8,7 @@ create table public.users (
   username text,
   avatar_url text,
   role text check (role in ('student', 'admin')) default 'student',
+  section text default 'Unassigned',
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
@@ -175,3 +176,39 @@ create table public.user_achievements (
 alter table public.user_achievements enable row level security;
 create policy "Users can view own achievements." on public.user_achievements for select using (auth.uid() = user_id);
 create policy "Users can insert own achievements." on public.user_achievements for insert with check (auth.uid() = user_id);
+
+-- XP AND LEVEL SYSTEM
+-- Add xp and level columns to users
+alter table public.users add column if not exists xp integer default 0;
+alter table public.users add column if not exists level integer default 1;
+
+-- Policy for users to update their own XP
+create policy "Users can update own xp." on public.users for update using (auth.uid() = id) with check (auth.uid() = id);
+
+-- PUSH NOTIFICATIONS AND ANNOUNCEMENTS
+
+-- Add push token to users table
+alter table public.users add column if not exists push_token text;
+
+-- ANNOUNCEMENTS TABLE
+create table if not exists public.announcements (
+  id uuid default uuid_generate_v4() primary key,
+  title text not null,
+  message text not null,
+  teacher_name text,
+  created_by uuid references public.users(id),
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+alter table public.announcements enable row level security;
+
+-- Everyone can view announcements
+create policy "Announcements are viewable by everyone." on public.announcements for select using (true);
+
+-- Only admins can create announcements
+create policy "Admins can create announcements." on public.announcements for insert 
+  with check (exists (select 1 from public.users where id = auth.uid() and role = 'admin'));
+
+-- Only admins can delete announcements
+create policy "Admins can delete announcements." on public.announcements for delete 
+  using (exists (select 1 from public.users where id = auth.uid() and role = 'admin'));
