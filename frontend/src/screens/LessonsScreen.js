@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, Image, Dimensions } from 'react-native';
-import { Text, Title, ActivityIndicator, useTheme, Card } from 'react-native-paper';
+import { View, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, Image, Dimensions, ImageBackground } from 'react-native';
+import { Text, Title, ActivityIndicator, useTheme } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Animatable from 'react-native-animatable';
 import { api } from '../services/api';
@@ -8,14 +8,37 @@ import { useAuthStore } from '../store/authStore';
 
 const { width } = Dimensions.get('window');
 
-// Map categories to local assets
-const THEME_IMAGES = {
-  'ICT': require('../../assets/images/lesson_ict.png'),
-  'Agriculture': require('../../assets/images/lesson_agriculture.png'),
-  'Tourism': require('../../assets/images/lesson_tourism.png'),
-  'Industrial Arts': require('../../assets/images/lesson_ict.png'),
-  'Default': require('../../assets/images/lesson_ict.png')
+// Map categories to local assets and icons
+const THEME_CONFIG = {
+  'ICT': {
+    image: require('../../assets/images/lesson_ict.jpg'),
+    icon: 'laptop',
+    color: '#6C63FF'
+  },
+  'Agriculture': {
+    image: require('../../assets/images/lesson_agriculture.jpg'),
+    icon: 'flower',
+    color: '#00B894'
+  },
+  'Tourism': {
+    image: require('../../assets/images/lesson_tourism.jpg'),
+    icon: 'airplane',
+    color: '#FF6B6B'
+  },
+  'Industrial Arts': {
+    image: require('../../assets/images/lesson_industrial.jpg'),
+    icon: 'hammer-wrench',
+    color: '#FF9F43'
+  },
+  'Default': {
+    image: require('../../assets/images/lesson_ict.jpg'),
+    icon: 'book-open-page-variant',
+    color: '#2D3436'
+  }
 };
+
+// Background image
+const DASHBOARD_BG = require('../../assets/images/dashboard_bg.jpg');
 
 export default function LessonsScreen({ navigation }) {
   const { user } = useAuthStore();
@@ -23,6 +46,7 @@ export default function LessonsScreen({ navigation }) {
   const [lessons, setLessons] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [topicCounts, setTopicCounts] = useState({});
 
   const fetchLessons = async () => {
     try {
@@ -30,6 +54,18 @@ export default function LessonsScreen({ navigation }) {
         api.lessons.getAll(),
         api.progress.getUserQuizProgress(user.id)
       ]);
+
+      // Fetch topic counts for each lesson
+      const counts = {};
+      for (const lesson of lessonsData) {
+        try {
+          const topics = await api.lessons.getTopics(lesson.id);
+          counts[lesson.id] = topics?.length || 0;
+        } catch {
+          counts[lesson.id] = 0;
+        }
+      }
+      setTopicCounts(counts);
 
       const lessonsWithQuizzes = await Promise.all(lessonsData.map(async (lesson) => {
         const quiz = await api.quizzes.getByLessonId(lesson.id);
@@ -47,10 +83,15 @@ export default function LessonsScreen({ navigation }) {
           }
         }
 
+        // Calculate progress for this lesson (based on quiz score if completed)
+        const quizResult = quizProgress.find(p => p.quiz_id === l.quizId);
+        const progress = quizResult ? quizResult.score : 0;
+
         return {
           ...l,
           locked: !isUnlocked,
           completed: l.quizId && passedQuizIds.includes(l.quizId),
+          progress,
         };
       });
       setLessons(lessonsWithStatus);
@@ -80,142 +121,134 @@ export default function LessonsScreen({ navigation }) {
   }
 
   const completedCount = lessons.filter(l => l.completed).length;
-  const progress = lessons.length > 0 ? completedCount / lessons.length : 0;
+  const overallProgress = lessons.length > 0 ? Math.round((completedCount / lessons.length) * 100) : 0;
 
   return (
-    <View style={styles.container}>
+    <ImageBackground source={DASHBOARD_BG} style={styles.container} resizeMode="cover">
       <ScrollView
         style={styles.scrollView}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        contentContainerStyle={{ paddingBottom: 40 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
+        contentContainerStyle={{ paddingBottom: 100 }}
         showsVerticalScrollIndicator={false}
       >
         {/* Header */}
         <Animatable.View animation="fadeInDown" duration={600} style={styles.header}>
-          <Title style={styles.headerTitle}>Learning Path</Title>
+          {/* LearnHub Logo Button */}
+          <View style={styles.learnHubBadge}>
+            <View style={styles.bookIconContainer}>
+              <View style={[styles.bookPage, { backgroundColor: '#FF6B6B' }]} />
+              <View style={[styles.bookPage, { backgroundColor: '#00B894', marginLeft: 2 }]} />
+              <View style={[styles.bookPage, { backgroundColor: '#6C63FF', marginLeft: 2 }]} />
+            </View>
+            <Text style={styles.learnHubText}>LearnHub</Text>
+          </View>
           <Text style={styles.headerSubtitle}>Master each lesson to unlock the next</Text>
 
           {/* Progress Summary */}
           <View style={styles.progressSummary}>
             <View style={styles.progressInfo}>
-              <Text style={styles.progressLabel}>Progress</Text>
-              <Text style={[styles.progressValue, { color: theme.colors.primary }]}>
-                {completedCount}/{lessons.length} Lessons
-              </Text>
+              <Text style={styles.progressLabel}>Overall Progress</Text>
+              <View style={styles.progressBarContainer}>
+                <View style={[styles.progressBarFill, { width: `${overallProgress}%` }]} />
+              </View>
             </View>
-            <View style={[styles.progressBadge, { backgroundColor: theme.colors.primary + '15' }]}>
-              <Text style={[styles.progressPercent, { color: theme.colors.primary }]}>
-                {Math.round(progress * 100)}%
-              </Text>
-            </View>
+            <Text style={styles.progressPercent}>{overallProgress}%</Text>
           </View>
         </Animatable.View>
 
-        {/* Learning Path */}
-        <View style={styles.pathContainer}>
+        {/* Lesson Cards Grid */}
+        <View style={styles.cardsGrid}>
           {lessons.map((lesson, index) => {
-            const imageSource = THEME_IMAGES[lesson.category] || THEME_IMAGES['Default'];
-            const isLast = index === lessons.length - 1;
+            const config = THEME_CONFIG[lesson.category] || THEME_CONFIG['Default'];
+            const topicCount = topicCounts[lesson.id] || 0;
 
             return (
               <Animatable.View
                 key={lesson.id}
                 animation="fadeInUp"
                 delay={index * 100}
+                style={styles.cardWrapper}
               >
-                <View style={styles.pathItem}>
-                  {/* Path Line & Node */}
-                  <View style={styles.pathNodeContainer}>
-                    <View style={[
-                      styles.pathNode,
-                      lesson.completed && styles.completedNode,
-                      lesson.locked && styles.lockedNode,
-                      !lesson.completed && !lesson.locked && styles.activeNode
-                    ]}>
-                      {lesson.completed ? (
-                        <MaterialCommunityIcons name="check" size={18} color="#fff" />
-                      ) : lesson.locked ? (
-                        <MaterialCommunityIcons name="lock" size={14} color="#B2BEC3" />
-                      ) : (
-                        <Text style={styles.nodeNumber}>{index + 1}</Text>
-                      )}
-                    </View>
-                    {!isLast && (
-                      <View style={[
-                        styles.pathLine,
-                        lesson.completed && styles.completedLine
-                      ]} />
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={() => {
+                    if (!lesson.locked) {
+                      navigation.navigate('LessonDetail', { lessonId: lesson.id, title: lesson.title });
+                    }
+                  }}
+                  disabled={lesson.locked}
+                  style={[
+                    styles.lessonCard,
+                    lesson.locked && styles.lockedCard,
+                  ]}
+                >
+                  {/* Image Section */}
+                  <View style={styles.cardImageContainer}>
+                    <Image source={config.image} style={styles.cardImage} resizeMode="cover" />
+                    {lesson.locked && (
+                      <View style={styles.lockOverlay}>
+                        <MaterialCommunityIcons name="lock" size={32} color="#fff" />
+                      </View>
+                    )}
+                    {lesson.completed && (
+                      <View style={styles.completedBadge}>
+                        <MaterialCommunityIcons name="check-circle" size={24} color="#00B894" />
+                      </View>
                     )}
                   </View>
 
-                  {/* Lesson Card */}
-                  <TouchableOpacity
-                    activeOpacity={0.7}
-                    onPress={() => {
-                      if (!lesson.locked) {
-                        navigation.navigate('LessonDetail', { lessonId: lesson.id, title: lesson.title });
-                      }
-                    }}
-                    disabled={lesson.locked}
-                    style={styles.lessonCardContainer}
-                  >
-                    <Card style={[
-                      styles.lessonCard,
-                      lesson.locked && styles.lockedCard,
-                      lesson.completed && styles.completedCard,
-                      !lesson.locked && !lesson.completed && styles.activeCard
-                    ]}>
-                      <Card.Content style={styles.cardContent}>
-                        <Image source={imageSource} style={styles.lessonImage} resizeMode="contain" />
-                        <View style={styles.lessonInfo}>
-                          <Title style={[
-                            styles.lessonTitle,
-                            lesson.locked && styles.lockedText
-                          ]}>
-                            {lesson.title}
-                          </Title>
-                          <View style={styles.lessonMeta}>
-                            <View style={[
-                              styles.categoryBadge,
-                              { backgroundColor: lesson.locked ? '#E0E0E0' : theme.colors.primary + '15' }
-                            ]}>
-                              <Text style={[
-                                styles.categoryText,
-                                { color: lesson.locked ? '#B2BEC3' : theme.colors.primary }
-                              ]}>
-                                {lesson.category}
-                              </Text>
-                            </View>
-                            {lesson.completed && (
-                              <View style={styles.xpBadge}>
-                                <MaterialCommunityIcons name="star" size={12} color="#FFD700" />
-                                <Text style={styles.xpText}>+100 XP</Text>
-                              </View>
-                            )}
-                          </View>
-                        </View>
+                  {/* Content Section */}
+                  <View style={styles.cardContent}>
+                    <View style={styles.cardHeader}>
+                      <View style={styles.cardTitleSection}>
+                        <Text style={[styles.cardTitle, lesson.locked && styles.lockedText]}>
+                          {lesson.title}
+                        </Text>
+                        <Text style={[styles.cardSubtitle, lesson.locked && styles.lockedText]}>
+                          {topicCount} {topicCount === 1 ? 'lesson' : 'lessons'}
+                        </Text>
+                      </View>
+                      <View style={[styles.iconCircle, { borderColor: lesson.locked ? '#E0E0E0' : '#2D3436' }]}>
                         <MaterialCommunityIcons
-                          name={lesson.locked ? "lock" : "chevron-right"}
-                          size={24}
-                          color={lesson.locked ? '#B2BEC3' : theme.colors.primary}
+                          name={config.icon}
+                          size={20}
+                          color={lesson.locked ? '#B2BEC3' : '#2D3436'}
                         />
-                      </Card.Content>
-                    </Card>
-                  </TouchableOpacity>
-                </View>
+                      </View>
+                    </View>
+
+                    {/* Progress Bar */}
+                    <View style={styles.cardProgressSection}>
+                      <Text style={[styles.cardProgressLabel, lesson.locked && styles.lockedText]}>
+                        Progress
+                      </Text>
+                      <Text style={[styles.cardProgressPercent, lesson.locked && styles.lockedText]}>
+                        {lesson.progress}%
+                      </Text>
+                    </View>
+                    <View style={styles.cardProgressBarBg}>
+                      <View
+                        style={[
+                          styles.cardProgressBarFill,
+                          { width: `${lesson.progress}%` },
+                          lesson.locked && styles.lockedProgressBar
+                        ]}
+                      />
+                    </View>
+                  </View>
+                </TouchableOpacity>
               </Animatable.View>
             );
           })}
         </View>
       </ScrollView>
-    </View>
+    </ImageBackground>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8F9FA',
   },
   scrollView: {
     flex: 1,
@@ -226,165 +259,206 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#F8F9FA',
   },
+  // Header
   header: {
     padding: 20,
     paddingTop: 60,
   },
-  headerTitle: {
-    fontSize: 28,
+  learnHubBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 25,
+    borderWidth: 2,
+    borderColor: '#2D3436',
+    marginBottom: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  bookIconContainer: {
+    flexDirection: 'row',
+    marginRight: 10,
+  },
+  bookPage: {
+    width: 6,
+    height: 18,
+    borderRadius: 2,
+  },
+  learnHubText: {
+    fontSize: 16,
     fontWeight: 'bold',
     color: '#2D3436',
-    marginBottom: 4,
   },
   headerSubtitle: {
     fontSize: 14,
-    color: '#636E72',
+    color: 'rgba(255, 255, 255, 0.9)',
     marginBottom: 20,
   },
+  // Progress Summary
   progressSummary: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     padding: 16,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  progressInfo: {},
-  progressLabel: {
-    fontSize: 12,
-    color: '#636E72',
-  },
-  progressValue: {
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  progressBadge: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
     borderRadius: 20,
+    borderWidth: 3,
+    borderColor: '#2D3436',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
   },
-  progressPercent: {
-    fontSize: 16,
-    fontWeight: 'bold',
+  progressInfo: {
+    flex: 1,
+    marginRight: 16,
   },
-  pathContainer: {
-    paddingHorizontal: 20,
-    paddingTop: 10,
-  },
-  pathItem: {
-    flexDirection: 'row',
+  progressLabel: {
+    fontSize: 13,
+    color: '#636E72',
     marginBottom: 8,
   },
-  pathNodeContainer: {
-    width: 40,
-    alignItems: 'center',
-  },
-  pathNode: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 1,
-  },
-  completedNode: {
-    backgroundColor: '#00B894',
-  },
-  lockedNode: {
-    backgroundColor: '#F5F5F5',
-    borderWidth: 2,
-    borderColor: '#E0E0E0',
-  },
-  activeNode: {
-    backgroundColor: '#6C63FF',
-  },
-  nodeNumber: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  pathLine: {
-    width: 3,
-    flex: 1,
+  progressBarContainer: {
+    height: 10,
     backgroundColor: '#E0E0E0',
-    marginVertical: 4,
+    borderRadius: 5,
+    overflow: 'hidden',
   },
-  completedLine: {
-    backgroundColor: '#00B894',
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#2D3436',
+    borderRadius: 5,
   },
-  lessonCardContainer: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  lessonCard: {
-    borderRadius: 16,
-    elevation: 2,
-    backgroundColor: '#fff',
-  },
-  lockedCard: {
-    opacity: 0.7,
-  },
-  completedCard: {
-    borderLeftWidth: 4,
-    borderLeftColor: '#00B894',
-  },
-  activeCard: {
-    borderLeftWidth: 4,
-    borderLeftColor: '#6C63FF',
-  },
-  cardContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-  },
-  lessonImage: {
-    width: 50,
-    height: 50,
-    marginRight: 12,
-  },
-  lessonInfo: {
-    flex: 1,
-  },
-  lessonTitle: {
-    fontSize: 15,
+  progressPercent: {
+    fontSize: 24,
     fontWeight: 'bold',
     color: '#2D3436',
-    marginBottom: 6,
+  },
+  // Cards Grid
+  cardsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: 12,
+    gap: 12,
+  },
+  cardWrapper: {
+    width: (width - 36) / 2,
+  },
+  // Lesson Card
+  lessonCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    borderWidth: 3,
+    borderColor: '#2D3436',
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  lockedCard: {
+    opacity: 0.8,
+    borderColor: '#E0E0E0',
+  },
+  // Card Image
+  cardImageContainer: {
+    height: 100,
+    backgroundColor: '#F0F0F0',
+    position: 'relative',
+  },
+  cardImage: {
+    width: '100%',
+    height: '100%',
+  },
+  lockOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  completedBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 2,
+  },
+  // Card Content
+  cardContent: {
+    padding: 14,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  cardTitleSection: {
+    flex: 1,
+    marginRight: 8,
+  },
+  cardTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#2D3436',
+  },
+  cardSubtitle: {
+    fontSize: 12,
+    color: '#636E72',
+    marginTop: 2,
   },
   lockedText: {
     color: '#B2BEC3',
   },
-  lessonMeta: {
-    flexDirection: 'row',
+  iconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    justifyContent: 'center',
     alignItems: 'center',
-    gap: 8,
   },
-  categoryBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  categoryText: {
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  xpBadge: {
+  // Card Progress
+  cardProgressSection: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    backgroundColor: '#FFF9E6',
-    borderRadius: 12,
-    gap: 4,
+    marginTop: 12,
   },
-  xpText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#FFB800',
+  cardProgressLabel: {
+    fontSize: 12,
+    color: '#636E72',
+  },
+  cardProgressPercent: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#2D3436',
+  },
+  cardProgressBarBg: {
+    height: 8,
+    backgroundColor: '#E0E0E0',
+    borderRadius: 4,
+    marginTop: 6,
+    overflow: 'hidden',
+  },
+  cardProgressBarFill: {
+    height: '100%',
+    backgroundColor: '#2D3436',
+    borderRadius: 4,
+  },
+  lockedProgressBar: {
+    backgroundColor: '#B2BEC3',
   },
 });

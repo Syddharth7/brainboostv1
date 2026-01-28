@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { View, StyleSheet, ScrollView, Alert, TouchableOpacity, Animated, Dimensions, Platform } from 'react-native';
+import { View, StyleSheet, ScrollView, Alert, TouchableOpacity, Animated, Dimensions, Platform, ImageBackground } from 'react-native';
 import { Title, Paragraph, Button, useTheme, Text, ActivityIndicator, Card, IconButton, Chip } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Animatable from 'react-native-animatable';
@@ -8,6 +8,9 @@ import { api } from '../services/api';
 import { useAuthStore } from '../store/authStore';
 
 const { width, height } = Dimensions.get('window');
+
+// Background image
+const DASHBOARD_BG = require('../../assets/images/dashboard_bg.jpg');
 
 // Parse content into sections (split by double newlines or headers)
 const parseContentSections = (content) => {
@@ -25,9 +28,20 @@ const parseContentSections = (content) => {
 const extractKeyPoints = (content) => {
     if (!content) return [];
 
-    const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 20);
-    // Take first 3-4 important sentences as key points
-    return sentences.slice(0, 4).map(s => s.trim());
+    // Look for sentences that contain key learning indicators
+    const keyIndicators = ['important', 'key', 'remember', 'note', 'essential', 'must', 'always', 'never', 'definition', 'means', 'refers to', 'is called', 'is known as'];
+    const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 15);
+
+    const keyPoints = sentences.filter(s =>
+        keyIndicators.some(indicator => s.toLowerCase().includes(indicator))
+    ).slice(0, 5);
+
+    // If no key indicators found, take first 3-4 sentences as key points
+    if (keyPoints.length === 0) {
+        return sentences.slice(0, 4).map(s => s.trim());
+    }
+
+    return keyPoints.map(s => s.trim());
 };
 
 // Calculate reading time (average 200 words per minute)
@@ -41,22 +55,18 @@ const calculateReadingTime = (content) => {
 const extractKeywords = (content) => {
     if (!content) return [];
 
-    // Common important words in educational content
-    const keywordPatterns = [
-        /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b/g, // Proper nouns
-    ];
-
     const words = content.match(/\b\w{6,}\b/g) || [];
     const uniqueWords = [...new Set(words)].slice(0, 8);
     return uniqueWords;
 };
 
 export default function TopicScreen({ route, navigation }) {
-    const { title, content, topicId, estimatedTime } = route.params || {
+    const { title, content, topicId, estimatedTime, topicOrder = 1 } = route.params || {
         title: 'Topic',
         content: 'No content available',
         topicId: null,
-        estimatedTime: 5
+        estimatedTime: 5,
+        topicOrder: 1
     };
 
     const theme = useTheme();
@@ -76,6 +86,7 @@ export default function TopicScreen({ route, navigation }) {
     const [showKeyPoints, setShowKeyPoints] = useState(false);
     const [contentHeight, setContentHeight] = useState(0);
     const [readingXpEarned, setReadingXpEarned] = useState(false);
+    const [xpResult, setXpResult] = useState(null);
     const [focusMode, setFocusMode] = useState(false);
 
     const readingTime = calculateReadingTime(content);
@@ -102,22 +113,50 @@ export default function TopicScreen({ route, navigation }) {
         };
         fetchQuiz();
 
+        // Auto-start text-to-speech when entering the screen
+        const startAutoSpeech = async () => {
+            if (content) {
+                setIsSpeaking(true);
+                Speech.speak(content, {
+                    language: 'en',
+                    rate: 0.85,
+                    onDone: () => setIsSpeaking(false),
+                    onStopped: () => setIsSpeaking(false),
+                    onError: () => setIsSpeaking(false)
+                });
+            }
+        };
+
+        // Small delay to let the screen load first
+        const timer = setTimeout(startAutoSpeech, 500);
+
         return () => {
             // Stop speech when leaving screen
+            clearTimeout(timer);
             Speech.stop();
         };
-    }, [topicId]);
+    }, [topicId, content]);
 
-    // Check if content is fully read
+    // Check if content is fully read and award XP
     useEffect(() => {
         if (scrollProgress >= 0.9) {
             setHasReadContent(true);
-            if (!readingXpEarned) {
+            if (!readingXpEarned && user) {
                 setReadingXpEarned(true);
-                // Award XP for reading (you can call API here)
+                // Award XP for reading the topic
+                const awardXP = async () => {
+                    try {
+                        const result = await api.xp.awardTopicXP(user.id, topicOrder);
+                        setXpResult(result);
+                        console.log('XP awarded:', result);
+                    } catch (error) {
+                        console.error('Error awarding XP:', error);
+                    }
+                };
+                awardXP();
             }
         }
-    }, [scrollProgress]);
+    }, [scrollProgress, readingXpEarned, user, topicOrder]);
 
     // Handle scroll progress
     const handleScroll = useCallback((event) => {
@@ -181,7 +220,8 @@ export default function TopicScreen({ route, navigation }) {
             quizId: quiz.id,
             topicId: topicId,
             quizTitle: quiz.title,
-            questions: quiz.quiz_questions
+            questions: quiz.quiz_questions,
+            topicOrder: topicOrder
         });
     };
 
@@ -189,266 +229,224 @@ export default function TopicScreen({ route, navigation }) {
     const progressBarWidth = scrollProgress * 100;
 
     return (
-        <View style={[styles.container, focusMode && styles.focusModeContainer]}>
+        <ImageBackground source={DASHBOARD_BG} style={styles.container} resizeMode="cover">
             {/* Scroll Progress Bar */}
             <View style={styles.progressBarContainer}>
-                <View style={[styles.progressBar, { width: `${progressBarWidth}%`, backgroundColor: theme.colors.primary }]} />
+                <View style={[styles.progressBar, { width: `${progressBarWidth}%` }]} />
             </View>
 
             {/* Top Controls */}
-            {!focusMode && (
-                <Animatable.View animation="fadeInDown" duration={400} style={styles.topControls}>
-                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                        <MaterialCommunityIcons name="arrow-left" size={24} color="#2D3436" />
-                    </TouchableOpacity>
+            <Animatable.View animation="fadeInDown" duration={400} style={styles.topControls}>
+                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButtonCircle}>
+                    <MaterialCommunityIcons name="arrow-left" size={20} color="#2D3436" />
+                </TouchableOpacity>
 
-                    <View style={styles.topRightControls}>
-                        {/* Font Size Controls */}
-                        <View style={styles.fontControls}>
-                            <TouchableOpacity onPress={decreaseFontSize} style={styles.fontButton}>
-                                <Text style={styles.fontButtonText}>A-</Text>
-                            </TouchableOpacity>
-                            <Text style={styles.fontSizeLabel}>{fontSize}</Text>
-                            <TouchableOpacity onPress={increaseFontSize} style={styles.fontButton}>
-                                <Text style={styles.fontButtonText}>A+</Text>
-                            </TouchableOpacity>
-                        </View>
-
-                        {/* Text-to-Speech */}
-                        <TouchableOpacity
-                            onPress={toggleSpeech}
-                            style={[styles.ttsButton, isSpeaking && styles.ttsButtonActive]}
-                        >
-                            <MaterialCommunityIcons
-                                name={isSpeaking ? "stop" : "volume-high"}
-                                size={20}
-                                color={isSpeaking ? "#fff" : theme.colors.primary}
-                            />
+                <View style={styles.topRightControls}>
+                    {/* Font Size Controls */}
+                    <View style={styles.fontControls}>
+                        <TouchableOpacity onPress={decreaseFontSize} style={styles.fontButton}>
+                            <Text style={styles.fontButtonText}>A-</Text>
                         </TouchableOpacity>
-
-                        {/* Focus Mode */}
-                        <TouchableOpacity
-                            onPress={() => setFocusMode(!focusMode)}
-                            style={styles.focusButton}
-                        >
-                            <MaterialCommunityIcons name="eye" size={20} color="#636E72" />
+                        <Text style={styles.fontSizeLabel}>{fontSize}</Text>
+                        <TouchableOpacity onPress={increaseFontSize} style={styles.fontButton}>
+                            <Text style={styles.fontButtonText}>A+</Text>
                         </TouchableOpacity>
                     </View>
-                </Animatable.View>
-            )}
+
+                    {/* Text-to-Speech */}
+                    <TouchableOpacity
+                        onPress={toggleSpeech}
+                        style={[styles.ttsButton, isSpeaking && styles.ttsButtonActive]}
+                    >
+                        <MaterialCommunityIcons
+                            name={isSpeaking ? "stop" : "volume-high"}
+                            size={18}
+                            color={isSpeaking ? "#fff" : "#6C63FF"}
+                        />
+                    </TouchableOpacity>
+                </View>
+            </Animatable.View>
 
             <ScrollView
                 ref={scrollViewRef}
                 style={styles.scrollView}
-                contentContainerStyle={{ paddingBottom: 100 }}
+                contentContainerStyle={{ paddingBottom: 120 }}
                 showsVerticalScrollIndicator={false}
                 onScroll={handleScroll}
                 scrollEventThrottle={16}
             >
                 {/* Header */}
-                <View style={[styles.header, focusMode && styles.focusModeHeader]}>
-                    {focusMode && (
-                        <TouchableOpacity onPress={() => setFocusMode(false)} style={styles.exitFocusButton}>
-                            <MaterialCommunityIcons name="close" size={24} color="#636E72" />
-                            <Text style={styles.exitFocusText}>Exit Focus Mode</Text>
-                        </TouchableOpacity>
-                    )}
-                    <Title style={[styles.headerTitle, focusMode && styles.focusModeTitle]}>{title}</Title>
+                <View style={styles.header}>
+                    {/* Title Badge */}
+                    <View style={styles.titleBadge}>
+                        <MaterialCommunityIcons name="book-open-page-variant" size={18} color="#6C63FF" style={{ marginRight: 8 }} />
+                        <Text style={styles.titleBadgeText}>{title}</Text>
+                    </View>
 
                     {/* Reading Info */}
                     <View style={styles.readingInfo}>
                         <View style={styles.readingBadge}>
-                            <MaterialCommunityIcons name="clock-outline" size={14} color="#636E72" />
+                            <MaterialCommunityIcons name="clock-outline" size={12} color="#fff" />
                             <Text style={styles.readingBadgeText}>{readingTime} min read</Text>
                         </View>
                         <View style={styles.readingBadge}>
-                            <MaterialCommunityIcons name="format-text" size={14} color="#636E72" />
+                            <MaterialCommunityIcons name="format-text" size={12} color="#fff" />
                             <Text style={styles.readingBadgeText}>{content?.split(/\s+/).length || 0} words</Text>
                         </View>
-                        <View style={[styles.readingBadge, { backgroundColor: theme.colors.primary + '15' }]}>
-                            <Text style={[styles.readingBadgeText, { color: theme.colors.primary }]}>
+                        <View style={[styles.readingBadge, styles.progressBadge]}>
+                            <Text style={styles.progressBadgeText}>
                                 {Math.round(scrollProgress * 100)}% read
                             </Text>
                         </View>
                     </View>
                 </View>
 
-                {/* Key Points Summary (Collapsible) */}
-                {keyPoints.length > 0 && !focusMode && (
-                    <Animatable.View animation="fadeInUp" delay={100}>
-                        <TouchableOpacity
-                            onPress={() => setShowKeyPoints(!showKeyPoints)}
-                            activeOpacity={0.8}
-                        >
-                            <Card style={styles.keyPointsCard}>
-                                <Card.Content>
-                                    <View style={styles.keyPointsHeader}>
-                                        <View style={styles.keyPointsTitleRow}>
-                                            <MaterialCommunityIcons name="lightbulb-outline" size={20} color="#FFB800" />
-                                            <Text style={styles.keyPointsTitle}>Key Points</Text>
-                                        </View>
-                                        <MaterialCommunityIcons
-                                            name={showKeyPoints ? "chevron-up" : "chevron-down"}
-                                            size={24}
-                                            color="#636E72"
-                                        />
+                {/* Blackboard Content Card */}
+                <Animatable.View animation="fadeInUp" delay={200} style={styles.blackboardContainer}>
+                    {/* Wooden Frame Top */}
+                    <View style={styles.woodenFrameTop} />
+
+                    {/* Blackboard */}
+                    <View style={styles.blackboard}>
+                        {/* Chalk Dust Effect */}
+                        <View style={styles.chalkDust} />
+
+                        {/* Key Learning Points */}
+                        {keyPoints.length > 0 && (
+                            <View style={styles.keyPointsSection}>
+                                <Text style={styles.keyPointsHeader}>📚 Key Learning Points</Text>
+                                {keyPoints.map((point, idx) => (
+                                    <View key={idx} style={styles.keyPointItem}>
+                                        <MaterialCommunityIcons name="star" size={14} color="#FFD93D" />
+                                        <Text style={styles.keyPointText}>{point}.</Text>
                                     </View>
+                                ))}
+                            </View>
+                        )}
 
-                                    {showKeyPoints && (
-                                        <Animatable.View animation="fadeIn" duration={300}>
-                                            {keyPoints.map((point, index) => (
-                                                <View key={index} style={styles.keyPointItem}>
-                                                    <MaterialCommunityIcons name="check-circle" size={16} color="#00B894" />
-                                                    <Text style={styles.keyPointText}>{point}.</Text>
-                                                </View>
-                                            ))}
-                                        </Animatable.View>
-                                    )}
-                                </Card.Content>
-                            </Card>
-                        </TouchableOpacity>
-                    </Animatable.View>
-                )}
+                        {/* Content Sections */}
+                        {sections.map((section, index) => (
+                            <View key={section.id} style={styles.sectionContainer}>
+                                <Text style={[styles.chalkText, { fontSize, lineHeight: fontSize * 1.8 }]}>
+                                    {section.text}
+                                </Text>
 
-                {/* Content Sections with Checkpoints */}
-                <Animatable.View animation="fadeInUp" delay={200}>
-                    <Card style={[styles.contentCard, focusMode && styles.focusModeCard]}>
-                        <Card.Content>
-                            {sections.map((section, index) => (
-                                <View key={section.id} style={styles.sectionContainer}>
-                                    <Paragraph style={[styles.content, { fontSize, lineHeight: fontSize * 1.6 }]}>
-                                        {section.text}
-                                    </Paragraph>
+                                {/* "I Understand" Checkpoint */}
+                                {index < sections.length - 1 && (
+                                    <TouchableOpacity
+                                        onPress={() => toggleSectionUnderstood(section.id)}
+                                        style={[
+                                            styles.checkpointButton,
+                                            understoodSections[section.id] && styles.checkpointButtonActive
+                                        ]}
+                                    >
+                                        <MaterialCommunityIcons
+                                            name={understoodSections[section.id] ? "check-circle" : "circle-outline"}
+                                            size={16}
+                                            color={understoodSections[section.id] ? "#4ADE80" : "rgba(255,255,255,0.5)"}
+                                        />
+                                        <Text style={[
+                                            styles.checkpointText,
+                                            understoodSections[section.id] && styles.checkpointTextActive
+                                        ]}>
+                                            {understoodSections[section.id] ? "Got it! ✓" : "I understand this section"}
+                                        </Text>
+                                    </TouchableOpacity>
+                                )}
 
-                                    {/* "I Understand" Checkpoint */}
-                                    {!focusMode && index < sections.length - 1 && (
-                                        <TouchableOpacity
-                                            onPress={() => toggleSectionUnderstood(section.id)}
-                                            style={[
-                                                styles.checkpointButton,
-                                                understoodSections[section.id] && styles.checkpointButtonActive
-                                            ]}
-                                        >
-                                            <MaterialCommunityIcons
-                                                name={understoodSections[section.id] ? "check-circle" : "circle-outline"}
-                                                size={18}
-                                                color={understoodSections[section.id] ? "#00B894" : "#B2BEC3"}
-                                            />
-                                            <Text style={[
-                                                styles.checkpointText,
-                                                understoodSections[section.id] && styles.checkpointTextActive
-                                            ]}>
-                                                {understoodSections[section.id] ? "Got it!" : "I understand this section"}
-                                            </Text>
-                                        </TouchableOpacity>
-                                    )}
+                                {index < sections.length - 1 && (
+                                    <View style={styles.sectionDivider} />
+                                )}
+                            </View>
+                        ))}
 
-                                    {index < sections.length - 1 && (
-                                        <View style={styles.sectionDivider} />
-                                    )}
-                                </View>
-                            ))}
-                        </Card.Content>
-                    </Card>
+                        {/* Chalk Tray */}
+                        <View style={styles.chalkTray}>
+                            <View style={[styles.chalkPiece, { backgroundColor: '#FFFFFF' }]} />
+                            <View style={[styles.chalkPiece, { backgroundColor: '#FFD93D' }]} />
+                            <View style={[styles.chalkPiece, { backgroundColor: '#FF6B6B' }]} />
+                            <View style={[styles.chalkPiece, { backgroundColor: '#4ADE80' }]} />
+                        </View>
+                    </View>
+
+                    {/* Wooden Frame Bottom */}
+                    <View style={styles.woodenFrameBottom} />
                 </Animatable.View>
 
-                {/* Keywords */}
-                {keywords.length > 0 && !focusMode && (
-                    <Animatable.View animation="fadeInUp" delay={300} style={styles.keywordsContainer}>
-                        <Text style={styles.keywordsTitle}>Important Terms</Text>
-                        <View style={styles.keywordsRow}>
-                            {keywords.map((keyword, index) => (
-                                <Chip
-                                    key={index}
-                                    style={styles.keywordChip}
-                                    textStyle={styles.keywordText}
-                                >
-                                    {keyword}
-                                </Chip>
-                            ))}
-                        </View>
-                    </Animatable.View>
-                )}
-
                 {/* Understanding Progress */}
-                {sections.length > 1 && !focusMode && (
-                    <Animatable.View animation="fadeInUp" delay={400} style={styles.understandingContainer}>
+                {sections.length > 1 && (
+                    <Animatable.View animation="fadeInUp" delay={400} style={styles.understandingCard}>
                         <View style={styles.understandingHeader}>
-                            <Text style={styles.understandingTitle}>Your Understanding</Text>
-                            <Text style={[styles.understandingPercent, { color: theme.colors.primary }]}>
+                            <Text style={styles.understandingTitle}>📊 Your Understanding</Text>
+                            <Text style={styles.understandingPercent}>
                                 {Math.round(understandingProgress * 100)}%
                             </Text>
                         </View>
                         <View style={styles.understandingBar}>
                             <View style={[
                                 styles.understandingProgress,
-                                { width: `${understandingProgress * 100}%`, backgroundColor: '#00B894' }
+                                { width: `${understandingProgress * 100}%` }
                             ]} />
                         </View>
                     </Animatable.View>
                 )}
 
                 {/* XP Earned for Reading */}
-                {readingXpEarned && !focusMode && (
+                {readingXpEarned && xpResult && (
                     <Animatable.View animation="bounceIn" style={styles.xpEarnedBanner}>
                         <MaterialCommunityIcons name="star" size={20} color="#FFD700" />
-                        <Text style={styles.xpEarnedText}>+50 XP for reading!</Text>
-                    </Animatable.View>
-                )}
-
-                {/* Action Buttons */}
-                {!focusMode && (
-                    <Animatable.View animation="fadeInUp" delay={500} style={styles.buttonContainer}>
-                        {loadingQuiz ? (
-                            <ActivityIndicator size="small" color={theme.colors.primary} />
-                        ) : quiz ? (
-                            <View>
-                                <Button
-                                    mode="contained"
-                                    onPress={handleTakeQuiz}
-                                    disabled={!hasReadContent}
-                                    style={[styles.button, !hasReadContent && styles.disabledButton]}
-                                    icon="brain"
-                                    contentStyle={styles.buttonContent}
-                                >
-                                    {hasReadContent ? 'Take Quiz' : `Scroll to finish reading (${Math.round(scrollProgress * 100)}%)`}
-                                </Button>
-                                {hasReadContent && (
-                                    <View style={styles.quizXpPreview}>
-                                        <MaterialCommunityIcons name="star" size={16} color="#FFD700" />
-                                        <Text style={styles.quizXpText}>Earn up to 200 XP on the quiz!</Text>
-                                    </View>
-                                )}
-                            </View>
-                        ) : (
-                            <Button
-                                mode="contained"
-                                onPress={handleMarkComplete}
-                                style={[styles.button, { backgroundColor: '#00B894' }]}
-                                icon="check-circle"
-                                contentStyle={styles.buttonContent}
-                            >
-                                Mark as Complete
-                            </Button>
+                        <Text style={styles.xpEarnedText}>+{xpResult.xpAwarded} XP for reading!</Text>
+                        {xpResult.leveledUp && (
+                            <Text style={styles.levelUpText}> 🎉 Level Up!</Text>
                         )}
                     </Animatable.View>
                 )}
+
+                {/* Action Button */}
+                <Animatable.View animation="fadeInUp" delay={500} style={styles.buttonContainer}>
+                    {loadingQuiz ? (
+                        <ActivityIndicator size="small" color="#6C63FF" />
+                    ) : quiz ? (
+                        <View>
+                            <TouchableOpacity
+                                onPress={handleTakeQuiz}
+                                disabled={!hasReadContent}
+                                style={[styles.quizButton, !hasReadContent && styles.disabledButton]}
+                            >
+                                <MaterialCommunityIcons name="brain" size={22} color="#fff" />
+                                <Text style={styles.quizButtonText}>
+                                    {hasReadContent ? 'Take Quiz' : `Scroll to finish reading (${Math.round(scrollProgress * 100)}%)`}
+                                </Text>
+                            </TouchableOpacity>
+                            {hasReadContent && (
+                                <View style={styles.quizXpPreview}>
+                                    <MaterialCommunityIcons name="star" size={16} color="#FFD700" />
+                                    <Text style={styles.quizXpText}>Earn up to 200 XP on the quiz!</Text>
+                                </View>
+                            )}
+                        </View>
+                    ) : (
+                        <TouchableOpacity
+                            onPress={handleMarkComplete}
+                            style={[styles.quizButton, { backgroundColor: '#00B894' }]}
+                        >
+                            <MaterialCommunityIcons name="check-circle" size={22} color="#fff" />
+                            <Text style={styles.quizButtonText}>Mark as Complete</Text>
+                        </TouchableOpacity>
+                    )}
+                </Animatable.View>
             </ScrollView>
-        </View>
+        </ImageBackground>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#F8F9FA',
-    },
-    focusModeContainer: {
-        backgroundColor: '#1A1A2E',
     },
     progressBarContainer: {
-        height: 3,
-        backgroundColor: '#E0E0E0',
+        height: 4,
+        backgroundColor: 'rgba(255,255,255,0.3)',
         position: 'absolute',
         top: 0,
         left: 0,
@@ -457,21 +455,27 @@ const styles = StyleSheet.create({
     },
     progressBar: {
         height: '100%',
-        borderRadius: 1.5,
+        backgroundColor: '#6C63FF',
+        borderRadius: 2,
     },
+    // Top Controls
     topControls: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
         paddingHorizontal: 16,
-        paddingTop: 50,
-        paddingBottom: 10,
-        backgroundColor: '#fff',
-        borderBottomWidth: 1,
-        borderBottomColor: '#F0F0F0',
+        paddingTop: 55,
+        paddingBottom: 12,
     },
-    backButton: {
-        padding: 8,
+    backButtonCircle: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: '#FFFFFF',
+        borderWidth: 2,
+        borderColor: '#2D3436',
+        justifyContent: 'center',
+        alignItems: 'center',
     },
     topRightControls: {
         flexDirection: 'row',
@@ -481,63 +485,63 @@ const styles = StyleSheet.create({
     fontControls: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#F5F5F5',
+        backgroundColor: '#FFFFFF',
         borderRadius: 20,
+        borderWidth: 2,
+        borderColor: '#2D3436',
         paddingHorizontal: 4,
     },
     fontButton: {
         padding: 8,
     },
     fontButtonText: {
-        fontSize: 14,
+        fontSize: 13,
         fontWeight: 'bold',
-        color: '#636E72',
+        color: '#2D3436',
     },
     fontSizeLabel: {
-        fontSize: 12,
+        fontSize: 11,
         color: '#636E72',
         marginHorizontal: 4,
     },
     ttsButton: {
-        padding: 10,
-        backgroundColor: '#F5F5F5',
+        width: 40,
+        height: 40,
         borderRadius: 20,
+        backgroundColor: '#FFFFFF',
+        borderWidth: 2,
+        borderColor: '#2D3436',
+        justifyContent: 'center',
+        alignItems: 'center',
     },
     ttsButtonActive: {
         backgroundColor: '#6C63FF',
-    },
-    focusButton: {
-        padding: 10,
-        backgroundColor: '#F5F5F5',
-        borderRadius: 20,
+        borderColor: '#6C63FF',
     },
     scrollView: {
         flex: 1,
     },
+    // Header
     header: {
-        padding: 20,
-        paddingTop: 16,
+        paddingHorizontal: 16,
+        paddingBottom: 16,
     },
-    focusModeHeader: {
-        paddingTop: 60,
-    },
-    exitFocusButton: {
+    titleBadge: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 16,
-        gap: 8,
-    },
-    exitFocusText: {
-        color: '#636E72',
-    },
-    headerTitle: {
-        fontSize: 24,
-        fontWeight: 'bold',
-        color: '#2D3436',
+        backgroundColor: '#FFFFFF',
+        paddingVertical: 10,
+        paddingHorizontal: 16,
+        borderRadius: 25,
+        borderWidth: 2,
+        borderColor: '#2D3436',
+        alignSelf: 'flex-start',
         marginBottom: 12,
     },
-    focusModeTitle: {
-        color: '#F8F9FA',
+    titleBadgeText: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: '#2D3436',
     },
     readingInfo: {
         flexDirection: 'row',
@@ -547,66 +551,105 @@ const styles = StyleSheet.create({
     readingBadge: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#F5F5F5',
+        backgroundColor: 'rgba(0,0,0,0.3)',
         paddingHorizontal: 10,
         paddingVertical: 6,
         borderRadius: 12,
         gap: 4,
     },
     readingBadgeText: {
-        fontSize: 12,
-        color: '#636E72',
+        fontSize: 11,
+        color: '#fff',
     },
-    keyPointsCard: {
-        marginHorizontal: 20,
+    progressBadge: {
+        backgroundColor: '#6C63FF',
+    },
+    progressBadgeText: {
+        fontSize: 11,
+        color: '#fff',
+        fontWeight: 'bold',
+    },
+    // Blackboard
+    blackboardContainer: {
+        marginHorizontal: 16,
         marginBottom: 16,
-        borderRadius: 16,
-        backgroundColor: '#FFF9E6',
-        elevation: 0,
+    },
+    woodenFrameTop: {
+        height: 14,
+        backgroundColor: '#8B4513',
+        borderTopLeftRadius: 8,
+        borderTopRightRadius: 8,
+        borderWidth: 2,
+        borderBottomWidth: 0,
+        borderColor: '#5D2E0C',
+    },
+    woodenFrameBottom: {
+        height: 18,
+        backgroundColor: '#8B4513',
+        borderBottomLeftRadius: 8,
+        borderBottomRightRadius: 8,
+        borderWidth: 2,
+        borderTopWidth: 0,
+        borderColor: '#5D2E0C',
+    },
+    blackboard: {
+        backgroundColor: '#2C5530',
+        padding: 20,
+        borderLeftWidth: 4,
+        borderRightWidth: 4,
+        borderColor: '#8B4513',
+        minHeight: 200,
+    },
+    chalkDust: {
+        position: 'absolute',
+        top: 8,
+        left: 8,
+        right: 8,
+        height: 2,
+        backgroundColor: 'rgba(255, 255, 255, 0.1)',
+        borderRadius: 1,
+    },
+    // Key Points Section
+    keyPointsSection: {
+        backgroundColor: 'rgba(255, 217, 61, 0.15)',
+        borderRadius: 12,
+        padding: 16,
+        marginBottom: 20,
+        borderWidth: 2,
+        borderColor: '#FFD93D',
+        borderStyle: 'dashed',
     },
     keyPointsHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-    },
-    keyPointsTitleRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-    },
-    keyPointsTitle: {
+        color: '#FFD93D',
         fontSize: 16,
         fontWeight: 'bold',
-        color: '#2D3436',
+        marginBottom: 12,
+        textShadowColor: 'rgba(0, 0, 0, 0.3)',
+        textShadowOffset: { width: 1, height: 1 },
+        textShadowRadius: 2,
     },
     keyPointItem: {
         flexDirection: 'row',
         alignItems: 'flex-start',
-        marginTop: 12,
+        marginBottom: 8,
         gap: 8,
     },
     keyPointText: {
         flex: 1,
+        color: '#FFD93D',
         fontSize: 14,
-        color: '#2D3436',
         lineHeight: 20,
-    },
-    contentCard: {
-        marginHorizontal: 20,
-        borderRadius: 16,
-        elevation: 2,
-        backgroundColor: '#fff',
-        marginBottom: 16,
-    },
-    focusModeCard: {
-        backgroundColor: '#16213E',
-        elevation: 0,
+        fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
     },
     sectionContainer: {
         marginBottom: 8,
     },
-    content: {
-        color: '#2D3436',
+    chalkText: {
+        color: '#FFFFFF',
+        fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+        textShadowColor: 'rgba(255, 255, 255, 0.3)',
+        textShadowOffset: { width: 0.5, height: 0.5 },
+        textShadowRadius: 1,
     },
     checkpointButton: {
         flexDirection: 'row',
@@ -615,54 +658,55 @@ const styles = StyleSheet.create({
         marginTop: 12,
         paddingVertical: 8,
         paddingHorizontal: 12,
-        backgroundColor: '#F5F5F5',
+        backgroundColor: 'rgba(255,255,255,0.1)',
         borderRadius: 20,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.2)',
+        borderStyle: 'dashed',
         gap: 6,
     },
     checkpointButtonActive: {
-        backgroundColor: '#E8F8F5',
+        backgroundColor: 'rgba(74, 222, 128, 0.2)',
+        borderColor: '#4ADE80',
+        borderStyle: 'solid',
     },
     checkpointText: {
-        fontSize: 13,
-        color: '#B2BEC3',
+        fontSize: 12,
+        color: 'rgba(255,255,255,0.5)',
     },
     checkpointTextActive: {
-        color: '#00B894',
+        color: '#4ADE80',
         fontWeight: '600',
     },
     sectionDivider: {
         height: 1,
-        backgroundColor: '#F0F0F0',
+        backgroundColor: 'rgba(255,255,255,0.15)',
         marginVertical: 16,
     },
-    keywordsContainer: {
-        marginHorizontal: 20,
-        marginBottom: 16,
-    },
-    keywordsTitle: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: '#636E72',
-        marginBottom: 10,
-    },
-    keywordsRow: {
+    chalkTray: {
         flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: 8,
+        justifyContent: 'center',
+        marginTop: 24,
+        paddingTop: 16,
+        borderTopWidth: 1,
+        borderTopColor: 'rgba(255, 255, 255, 0.1)',
+        gap: 12,
     },
-    keywordChip: {
-        backgroundColor: '#F0EEFF',
+    chalkPiece: {
+        width: 28,
+        height: 7,
+        borderRadius: 3,
+        transform: [{ rotate: '-5deg' }],
     },
-    keywordText: {
-        fontSize: 12,
-        color: '#6C63FF',
-    },
-    understandingContainer: {
-        marginHorizontal: 20,
-        marginBottom: 20,
-        backgroundColor: '#fff',
+    // Understanding Card
+    understandingCard: {
+        marginHorizontal: 16,
+        marginBottom: 16,
+        backgroundColor: '#FFFFFF',
+        borderRadius: 16,
+        borderWidth: 2,
+        borderColor: '#2D3436',
         padding: 16,
-        borderRadius: 12,
     },
     understandingHeader: {
         flexDirection: 'row',
@@ -672,30 +716,35 @@ const styles = StyleSheet.create({
     understandingTitle: {
         fontSize: 14,
         fontWeight: '600',
-        color: '#636E72',
+        color: '#2D3436',
     },
     understandingPercent: {
         fontWeight: 'bold',
+        color: '#6C63FF',
     },
     understandingBar: {
-        height: 8,
+        height: 10,
         backgroundColor: '#E0E0E0',
-        borderRadius: 4,
+        borderRadius: 5,
         overflow: 'hidden',
     },
     understandingProgress: {
         height: '100%',
-        borderRadius: 4,
+        backgroundColor: '#00B894',
+        borderRadius: 5,
     },
+    // XP Banner
     xpEarnedBanner: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        marginHorizontal: 20,
+        marginHorizontal: 16,
         marginBottom: 16,
-        backgroundColor: '#FFF9E6',
-        paddingVertical: 12,
-        borderRadius: 12,
+        backgroundColor: '#FFFFFF',
+        borderRadius: 16,
+        borderWidth: 2,
+        borderColor: '#2D3436',
+        paddingVertical: 14,
         gap: 8,
     },
     xpEarnedText: {
@@ -703,14 +752,30 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         color: '#FFB800',
     },
+    levelUpText: {
+        fontSize: 14,
+        fontWeight: 'bold',
+        color: '#00B894',
+    },
+    // Button
     buttonContainer: {
-        paddingHorizontal: 20,
+        paddingHorizontal: 16,
     },
-    button: {
-        borderRadius: 12,
+    quizButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#6C63FF',
+        paddingVertical: 16,
+        borderRadius: 16,
+        borderWidth: 2,
+        borderColor: '#2D3436',
+        gap: 10,
     },
-    buttonContent: {
-        paddingVertical: 8,
+    quizButtonText: {
+        color: '#fff',
+        fontSize: 16,
+        fontWeight: 'bold',
     },
     disabledButton: {
         backgroundColor: '#B2BEC3',

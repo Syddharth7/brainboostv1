@@ -1,45 +1,167 @@
-import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, ScrollView, RefreshControl, Dimensions, TouchableOpacity } from 'react-native';
-import { Title, Text, Avatar, ProgressBar, useTheme, Card } from 'react-native-paper';
+import React, { useEffect, useState, useRef } from 'react';
+import { View, StyleSheet, ScrollView, RefreshControl, Dimensions, TouchableOpacity, ImageBackground, Image, Animated, Easing } from 'react-native';
+import { Title, Text, Avatar } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as Animatable from 'react-native-animatable';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../services/api';
-import { XPProgressRing, StreakBadge, StatCard } from '../components/gamification';
 
-const { width } = Dimensions.get('window');
+const { width, height } = Dimensions.get('window');
+
+// Images
+const DASHBOARD_BG = require('../../assets/images/dashboard_bg.jpg');
+const LOGO_IMAGE = require('../../assets/images/logo.png');
+const WELCOME_IMAGE = require('../../assets/images/welcome_text.png');
+const LESSONS_CARD_IMAGE = require('../../assets/images/lessons_card.jpg');
+const QUIZ_CARD_IMAGE = require('../../assets/images/quiz_card.jpg');
+
+// Sample announcements data (replace with API call later)
+const sampleAnnouncements = [
+    { id: 1, title: 'New Lesson Added', message: 'Check out the new ICT lesson on Web Development!', date: '2 hours ago', teacher: 'Mr. Santos' },
+    { id: 2, title: 'Quiz Reminder', message: 'Don\'t forget to complete the Agriculture quiz by Friday.', date: '1 day ago', teacher: 'Ms. Garcia' },
+    { id: 3, title: 'Holiday Notice', message: 'No classes next Monday due to National Heroes Day.', date: '2 days ago', teacher: 'Admin' },
+];
+
+// Floating Card Component with animation
+const FloatingCard = ({ children, delay = 0, style }) => {
+    const floatAnim = useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        const startAnimation = () => {
+            Animated.loop(
+                Animated.sequence([
+                    Animated.timing(floatAnim, {
+                        toValue: -8,
+                        duration: 1500,
+                        easing: Easing.inOut(Easing.ease),
+                        useNativeDriver: true,
+                    }),
+                    Animated.timing(floatAnim, {
+                        toValue: 0,
+                        duration: 1500,
+                        easing: Easing.inOut(Easing.ease),
+                        useNativeDriver: true,
+                    }),
+                ])
+            ).start();
+        };
+
+        const timeout = setTimeout(startAnimation, delay);
+        return () => clearTimeout(timeout);
+    }, []);
+
+    return (
+        <Animated.View style={[style, { transform: [{ translateY: floatAnim }] }]}>
+            {children}
+        </Animated.View>
+    );
+};
+
+// Analytics Card Component
+const AnalyticsCard = ({ strugglingLessons }) => (
+    <Animatable.View animation="fadeInUp" delay={400}>
+        <LinearGradient
+            colors={['rgba(255,255,255,0.95)', 'rgba(255,245,245,0.95)']}
+            style={styles.analyticsCard}
+        >
+            <View style={styles.analyticsHeader}>
+                <MaterialCommunityIcons name="chart-line" size={24} color="#FF6B6B" />
+                <Text style={styles.analyticsTitle}>Areas to Improve</Text>
+            </View>
+
+            {strugglingLessons.length > 0 ? (
+                strugglingLessons.map((lesson, index) => (
+                    <View key={index} style={styles.struggleItem}>
+                        <View style={styles.struggleIcon}>
+                            <MaterialCommunityIcons name="alert-circle" size={16} color="#FF6B6B" />
+                        </View>
+                        <View style={styles.struggleInfo}>
+                            <Text style={styles.struggleName}>{lesson.name}</Text>
+                            <Text style={styles.struggleScore}>Score: {lesson.score}%</Text>
+                        </View>
+                        <TouchableOpacity style={styles.reviewButton}>
+                            <Text style={styles.reviewButtonText}>Review</Text>
+                        </TouchableOpacity>
+                    </View>
+                ))
+            ) : (
+                <View style={styles.noStruggleContainer}>
+                    <Text style={styles.noStruggleEmoji}>🎉</Text>
+                    <Text style={styles.noStruggleText}>Great job! No struggling areas found.</Text>
+                </View>
+            )}
+        </LinearGradient>
+    </Animatable.View>
+);
+
+// Notification Bubble Announcement Item Component
+const AnnouncementItem = ({ announcement, index }) => {
+    // Icons based on announcement type
+    const getIcon = () => {
+        if (announcement.title.toLowerCase().includes('lesson')) return 'book-open-variant';
+        if (announcement.title.toLowerCase().includes('quiz')) return 'head-question';
+        if (announcement.title.toLowerCase().includes('holiday')) return 'calendar';
+        return 'bullhorn';
+    };
+
+    return (
+        <Animatable.View animation="fadeInUp" delay={400 + (index * 100)} style={styles.announcementWrapper}>
+            {/* Speech bubble pointer */}
+            <View style={styles.speechPointer} />
+
+            <View style={styles.announcementItem}>
+                <View style={styles.announcementIcon}>
+                    <MaterialCommunityIcons
+                        name={getIcon()}
+                        size={24}
+                        color="#2D3436"
+                    />
+                </View>
+                <View style={styles.announcementContent}>
+                    <Text style={styles.announcementTitle}>
+                        <Text style={styles.teacherName}>{announcement.teacher}</Text>
+                        {' '}{announcement.title.toLowerCase()}
+                    </Text>
+                    <Text style={styles.announcementMessage} numberOfLines={1}>
+                        {announcement.message}
+                    </Text>
+                    <Text style={styles.announcementDate}>{announcement.date}</Text>
+                </View>
+            </View>
+        </Animatable.View>
+    );
+};
 
 export default function DashboardScreen({ navigation }) {
     const { user } = useAuthStore();
-    const theme = useTheme();
-
-    const [progress, setProgress] = useState(0);
     const [refreshing, setRefreshing] = useState(false);
-    const [stats, setStats] = useState({ lessons: 0, avgScore: 0, xp: 0 });
+    const [strugglingLessons, setStrugglingLessons] = useState([]);
+    const [announcements, setAnnouncements] = useState(sampleAnnouncements);
+    const [userXP, setUserXP] = useState({ xp: 0, level: 1 });
 
     const username = user?.user_metadata?.username || 'Student';
-    const level = 5;
-    const xp = 1250;
-    const nextLevelXp = 2000;
-    const streak = user?.streak_days || 3;
 
-    const fetchProgress = async () => {
+    const fetchData = async () => {
         try {
-            const totalTopics = 12;
-            const userProgress = await api.progress.getUserProgress(user.id);
+            // Fetch XP and level
+            try {
+                const xpData = await api.xp.getUserXP(user.id);
+                setUserXP(xpData);
+            } catch (xpError) {
+                console.error('Error fetching XP:', xpError);
+            }
+
             const quizProgress = await api.progress.getUserQuizProgress(user.id);
+            const struggling = quizProgress
+                .filter(p => p.score < 70)
+                .map(p => ({
+                    name: p.quiz?.title || 'Unknown Lesson',
+                    score: p.score
+                }))
+                .slice(0, 3);
 
-            const completedCount = userProgress.filter(p => p.completed).length;
-            setProgress(completedCount / totalTopics);
-
-            const totalScore = quizProgress.reduce((acc, curr) => acc + curr.score, 0);
-            const avgScore = quizProgress.length > 0 ? Math.round(totalScore / quizProgress.length) : 0;
-
-            setStats({
-                lessons: completedCount,
-                avgScore: avgScore,
-                xp: (completedCount * 100) + (totalScore * 10)
-            });
+            setStrugglingLessons(struggling);
         } catch (error) {
             console.error(error);
         } finally {
@@ -48,154 +170,140 @@ export default function DashboardScreen({ navigation }) {
     };
 
     useEffect(() => {
-        if (user) fetchProgress();
+        if (user) fetchData();
     }, [user]);
 
     const onRefresh = () => {
         setRefreshing(true);
-        fetchProgress();
+        fetchData();
     };
 
-    const menuItems = [
-        { title: 'Lessons', subtitle: 'Continue Learning', icon: 'book-open-variant', screen: 'Lessons', color: '#6C63FF' },
-        { title: 'Quiz', subtitle: 'Test Knowledge', icon: 'brain', screen: 'Quiz', color: '#FF6584' },
-        { title: 'Leaderboard', subtitle: 'Top Students', icon: 'trophy', screen: 'Leaderboard', color: '#FFD700' },
-        { title: 'Profile', subtitle: 'Your Stats', icon: 'account-circle', screen: 'Profile', color: '#00B894' },
-    ];
-
     return (
-        <View style={styles.container}>
+        <ImageBackground source={DASHBOARD_BG} style={styles.container} resizeMode="cover">
+            {/* Notification Bell Icon */}
+            <TouchableOpacity style={styles.notificationButton} activeOpacity={0.7}>
+                <View style={styles.notificationIconContainer}>
+                    <MaterialCommunityIcons name="bell-outline" size={26} color="#2D3436" />
+                    <View style={styles.notificationBadge}>
+                        <Text style={styles.notificationBadgeText}>3</Text>
+                    </View>
+                </View>
+            </TouchableOpacity>
+
             <ScrollView
                 style={styles.scrollView}
                 contentContainerStyle={styles.scrollContent}
-                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
                 showsVerticalScrollIndicator={false}
             >
-                {/* Header */}
-                <Animatable.View animation="fadeInDown" duration={600} style={styles.header}>
-                    <View>
-                        <Text style={styles.greeting}>Welcome back,</Text>
-                        <Title style={styles.username}>{username}</Title>
-                    </View>
-                    <TouchableOpacity onPress={() => navigation.navigate('Profile')}>
-                        <Avatar.Text
-                            size={50}
-                            label={username.substring(0, 2).toUpperCase()}
-                            style={{ backgroundColor: theme.colors.primary }}
-                        />
-                    </TouchableOpacity>
+                {/* Logo - No Border */}
+                <Animatable.View animation="bounceIn" duration={800} style={styles.logoContainer}>
+                    <Image source={LOGO_IMAGE} style={styles.logoImage} resizeMode="contain" />
                 </Animatable.View>
 
-                {/* Level & Streak Row */}
-                <Animatable.View animation="fadeInUp" delay={200} style={styles.levelRow}>
-                    <View style={styles.levelContainer}>
-                        <XPProgressRing
-                            currentXP={xp}
-                            maxXP={nextLevelXp}
-                            level={level}
-                            size={90}
-                            color={theme.colors.primary}
-                        />
+                {/* Welcome Image */}
+                <Animatable.View animation="fadeIn" delay={200} style={styles.welcomeContainer}>
+                    <Image source={WELCOME_IMAGE} style={styles.welcomeImage} resizeMode="contain" />
+                    <Title style={styles.usernameText}>{username}!</Title>
+                </Animatable.View>
+
+                {/* XP/Level Stats Section */}
+                <Animatable.View animation="fadeInUp" delay={300} style={styles.xpSection}>
+                    <View style={styles.xpCard}>
+                        <View style={styles.levelBadge}>
+                            <Text style={styles.levelLabel}>LVL</Text>
+                            <Text style={styles.levelNumber}>{userXP.level || 1}</Text>
+                        </View>
                         <View style={styles.xpInfo}>
-                            <Text style={styles.xpLabel}>Experience Points</Text>
-                            <Text style={[styles.xpValue, { color: theme.colors.primary }]}>{xp} / {nextLevelXp} XP</Text>
-                            <ProgressBar
-                                progress={xp / nextLevelXp}
-                                color={theme.colors.primary}
-                                style={styles.xpBar}
-                            />
+                            <View style={styles.xpHeader}>
+                                <MaterialCommunityIcons name="star" size={18} color="#FFD700" />
+                                <Text style={styles.xpText}>{userXP.xp || 0} XP</Text>
+                            </View>
+                            <View style={styles.xpProgressBar}>
+                                <View style={[
+                                    styles.xpProgressFill,
+                                    {
+                                        width: `${Math.min(100, ((userXP.xp || 0) - api.xp.getXpForLevel(userXP.level || 1)) /
+                                            (api.xp.getXpForLevel((userXP.level || 1) + 1) - api.xp.getXpForLevel(userXP.level || 1)) * 100)}%`
+                                    }
+                                ]} />
+                            </View>
+                            <Text style={styles.xpToNext}>
+                                {api.xp.getXpForLevel((userXP.level || 1) + 1) - (userXP.xp || 0)} XP to Level {(userXP.level || 1) + 1}
+                            </Text>
                         </View>
                     </View>
-                    <StreakBadge streak={streak} size="medium" />
                 </Animatable.View>
 
-                {/* Quick Stats */}
-                <Animatable.View animation="fadeInUp" delay={400} style={styles.statsRow}>
-                    <StatCard
-                        icon="book-check"
-                        value={stats.lessons}
-                        label="Lessons"
-                        color="#6C63FF"
-                        delay={500}
-                        style={styles.statCard}
-                    />
-                    <StatCard
-                        icon="percent"
-                        value={`${stats.avgScore}%`}
-                        label="Avg Score"
-                        color="#00B894"
-                        delay={600}
-                        style={styles.statCard}
-                    />
-                    <StatCard
-                        icon="star"
-                        value={stats.xp}
-                        label="Total XP"
-                        color="#FFD700"
-                        delay={700}
-                        style={styles.statCard}
-                    />
-                </Animatable.View>
-
-                {/* Progress Card */}
-                <Animatable.View animation="fadeInUp" delay={600}>
-                    <Card style={styles.progressCard}>
-                        <Card.Content>
-                            <View style={styles.progressHeader}>
-                                <Title style={styles.cardTitle}>Your Journey</Title>
-                                <Text style={[styles.progressPercent, { color: theme.colors.primary }]}>
-                                    {Math.round(progress * 100)}%
-                                </Text>
-                            </View>
-                            <ProgressBar progress={progress} color={theme.colors.primary} style={styles.mainProgressBar} />
-                            <Text style={styles.motivationText}>
-                                {progress < 0.3 ? "You're just getting started! Keep going! 💪" :
-                                    progress < 0.7 ? "Great progress! You're doing amazing! 🌟" :
-                                        progress < 1 ? "Almost there! Finish strong! 🚀" :
-                                            "Congratulations! You've completed everything! 🎉"}
-                            </Text>
-                        </Card.Content>
-                    </Card>
-                </Animatable.View>
-
-                {/* Menu Grid */}
-                <Title style={styles.sectionTitle}>Explore</Title>
-                <View style={styles.menuGrid}>
-                    {menuItems.map((item, index) => (
-                        <Animatable.View
-                            key={index}
-                            animation="fadeInUp"
-                            delay={800 + index * 100}
-                            style={styles.menuItem}
+                {/* Lesson & Quiz Cards Row */}
+                <View style={styles.cardsRow}>
+                    {/* Lesson Card */}
+                    <FloatingCard delay={0} style={styles.cardWrapper}>
+                        <TouchableOpacity
+                            activeOpacity={0.8}
+                            onPress={() => navigation.navigate('Lessons')}
+                            style={styles.mainCard}
                         >
-                            <TouchableOpacity
-                                onPress={() => navigation.navigate(item.screen)}
-                                activeOpacity={0.7}
-                            >
-                                <Card style={styles.menuCard}>
-                                    <Card.Content style={styles.menuCardContent}>
-                                        <View style={[styles.iconContainer, { backgroundColor: item.color + '15' }]}>
-                                            <MaterialCommunityIcons name={item.icon} size={28} color={item.color} />
-                                        </View>
-                                        <Text style={styles.menuTitle}>{item.title}</Text>
-                                        <Text style={styles.menuSubtitle}>{item.subtitle}</Text>
-                                    </Card.Content>
-                                </Card>
-                            </TouchableOpacity>
-                        </Animatable.View>
-                    ))}
+                            <Image source={LESSONS_CARD_IMAGE} style={styles.cardImage} resizeMode="cover" />
+                            <View style={styles.cardContent}>
+                                <Text style={styles.cardTitle}>Lessons</Text>
+                                <Text style={styles.cardSubtitle}>Continue Learning</Text>
+                            </View>
+                        </TouchableOpacity>
+                    </FloatingCard>
+
+                    {/* Quiz Card */}
+                    <FloatingCard delay={300} style={styles.cardWrapper}>
+                        <TouchableOpacity
+                            activeOpacity={0.8}
+                            onPress={() => navigation.navigate('Quiz')}
+                            style={styles.mainCard}
+                        >
+                            <Image source={QUIZ_CARD_IMAGE} style={styles.cardImage} resizeMode="cover" />
+                            <View style={styles.cardContent}>
+                                <Text style={styles.cardTitle}>Quiz</Text>
+                                <Text style={styles.cardSubtitle}>Test Your Knowledge</Text>
+                            </View>
+                        </TouchableOpacity>
+                    </FloatingCard>
                 </View>
+
+                {/* Analytics Card */}
+                <AnalyticsCard strugglingLessons={strugglingLessons} />
+
+                {/* Announcements Section */}
+                <Animatable.View animation="fadeIn" delay={500} style={styles.announcementSection}>
+                    <View style={styles.sectionHeader}>
+                        <MaterialCommunityIcons name="bullhorn-outline" size={20} color="#fff" />
+                        <Text style={styles.sectionTitle}>Announcements</Text>
+                    </View>
+
+                    <View style={styles.announcementList}>
+                        {announcements.length > 0 ? (
+                            announcements.map((announcement, index) => (
+                                <AnnouncementItem
+                                    key={announcement.id}
+                                    announcement={announcement}
+                                    index={index}
+                                />
+                            ))
+                        ) : (
+                            <View style={styles.emptyAnnouncement}>
+                                <Text style={styles.emptyAnnouncementText}>No announcements yet</Text>
+                            </View>
+                        )}
+                    </View>
+                </Animatable.View>
 
                 <View style={{ height: 100 }} />
             </ScrollView>
-        </View>
+        </ImageBackground>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#F8F9FA',
     },
     scrollView: {
         flex: 1,
@@ -203,137 +311,394 @@ const styles = StyleSheet.create({
     scrollContent: {
         paddingBottom: 20,
     },
-    header: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
+    // Logo
+    logoContainer: {
         alignItems: 'center',
-        padding: 20,
-        paddingTop: 60,
+        marginTop: 30,
+        paddingHorizontal: 16,
     },
-    greeting: {
-        fontSize: 14,
-        color: '#636E72',
+    logoImage: {
+        width: '100%',
+        height: 160,
     },
-    username: {
-        fontSize: 26,
+    // Welcome
+    welcomeContainer: {
+        alignItems: 'center',
+        marginTop: 8,
+        marginBottom: 20,
+    },
+    welcomeImage: {
+        width: 250,
+        height: 60,
+        marginBottom: 4,
+    },
+    usernameText: {
+        fontSize: 28,
+        fontWeight: 'bold',
+        color: '#fff',
+        textShadowColor: 'rgba(0, 0, 0, 0.3)',
+        textShadowOffset: { width: 1, height: 1 },
+        textShadowRadius: 3,
+    },
+    // Notification Button
+    notificationButton: {
+        position: 'absolute',
+        top: 50,
+        right: 20,
+        zIndex: 100,
+    },
+    notificationIconContainer: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: '#FFFFFF',
+        borderWidth: 2,
+        borderColor: '#2D3436',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    notificationBadge: {
+        position: 'absolute',
+        top: -4,
+        right: -4,
+        width: 20,
+        height: 20,
+        borderRadius: 10,
+        backgroundColor: '#FF6B6B',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 2,
+        borderColor: '#FFFFFF',
+    },
+    notificationBadgeText: {
+        color: '#FFFFFF',
+        fontSize: 11,
+        fontWeight: 'bold',
+    },
+    // XP Section
+    xpSection: {
+        paddingHorizontal: 16,
+        marginBottom: 16,
+    },
+    xpCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFFFFF',
+        borderRadius: 20,
+        borderWidth: 3,
+        borderColor: '#2D3436',
+        padding: 16,
+        gap: 16,
+    },
+    levelBadge: {
+        width: 60,
+        height: 60,
+        borderRadius: 30,
+        backgroundColor: '#6C63FF',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 3,
+        borderColor: '#2D3436',
+    },
+    levelLabel: {
+        color: 'rgba(255,255,255,0.8)',
+        fontSize: 10,
+        fontWeight: 'bold',
+    },
+    levelNumber: {
+        color: '#FFFFFF',
+        fontSize: 22,
+        fontWeight: 'bold',
+        marginTop: -2,
+    },
+    xpInfo: {
+        flex: 1,
+    },
+    xpHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        marginBottom: 8,
+    },
+    xpText: {
+        fontSize: 16,
         fontWeight: 'bold',
         color: '#2D3436',
     },
-    levelRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: 20,
-        marginBottom: 20,
-    },
-    levelContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        flex: 1,
-    },
-    xpInfo: {
-        marginLeft: 16,
-        flex: 1,
-    },
-    xpLabel: {
-        fontSize: 12,
-        color: '#636E72',
-        marginBottom: 4,
-    },
-    xpValue: {
-        fontSize: 16,
-        fontWeight: 'bold',
-        marginBottom: 8,
-    },
-    xpBar: {
-        height: 6,
-        borderRadius: 3,
+    xpProgressBar: {
+        height: 8,
         backgroundColor: '#E0E0E0',
+        borderRadius: 4,
+        overflow: 'hidden',
+        marginBottom: 6,
     },
-    statsRow: {
+    xpProgressFill: {
+        height: '100%',
+        backgroundColor: '#FFD700',
+        borderRadius: 4,
+    },
+    xpToNext: {
+        fontSize: 11,
+        color: '#636E72',
+    },
+    // Cards Row
+    cardsRow: {
         flexDirection: 'row',
-        justifyContent: 'space-between',
-        paddingHorizontal: 20,
-        marginBottom: 24,
+        paddingHorizontal: 16,
+        gap: 12,
+        marginBottom: 16,
     },
-    statCard: {
+    cardWrapper: {
         flex: 1,
-        marginHorizontal: 4,
     },
-    progressCard: {
-        marginHorizontal: 20,
-        marginBottom: 24,
-        borderRadius: 16,
-        elevation: 2,
-        backgroundColor: '#fff',
+    mainCard: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 20,
+        borderWidth: 3,
+        borderColor: '#2D3436',
+        overflow: 'hidden',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.15,
+        shadowRadius: 10,
+        elevation: 6,
     },
-    progressHeader: {
+    cardImage: {
+        width: '100%',
+        height: 100,
+    },
+    cardContent: {
+        padding: 14,
+    },
+    cardHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
+        alignItems: 'flex-start',
+    },
+    cardIconCircle: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: '#FFFFFF',
+        borderWidth: 2,
+        borderColor: '#2D3436',
+        justifyContent: 'center',
         alignItems: 'center',
-        marginBottom: 12,
     },
     cardTitle: {
         fontSize: 18,
         fontWeight: 'bold',
         color: '#2D3436',
     },
-    progressPercent: {
-        fontSize: 18,
-        fontWeight: 'bold',
-    },
-    mainProgressBar: {
-        height: 10,
-        borderRadius: 5,
-        backgroundColor: '#E0E0E0',
-    },
-    motivationText: {
-        marginTop: 12,
-        fontSize: 14,
-        color: '#636E72',
-        textAlign: 'center',
-    },
-    sectionTitle: {
-        fontSize: 20,
-        fontWeight: 'bold',
-        marginLeft: 20,
-        marginBottom: 16,
-        color: '#2D3436',
-    },
-    menuGrid: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        paddingHorizontal: 12,
-    },
-    menuItem: {
-        width: '50%',
-        padding: 8,
-    },
-    menuCard: {
-        borderRadius: 16,
-        elevation: 2,
-        backgroundColor: '#fff',
-    },
-    menuCardContent: {
-        alignItems: 'center',
-        paddingVertical: 24,
-    },
-    iconContainer: {
-        width: 56,
-        height: 56,
-        borderRadius: 28,
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginBottom: 12,
-    },
-    menuTitle: {
-        fontSize: 16,
-        fontWeight: 'bold',
-        color: '#2D3436',
-        marginBottom: 4,
-    },
-    menuSubtitle: {
+    cardSubtitle: {
         fontSize: 12,
         color: '#636E72',
+        marginTop: 2,
+    },
+    progressSection: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginTop: 12,
+    },
+    progressLabel: {
+        fontSize: 13,
+        color: '#636E72',
+    },
+    progressPercent: {
+        fontSize: 13,
+        fontWeight: 'bold',
+        color: '#2D3436',
+    },
+    progressBarBg: {
+        height: 8,
+        backgroundColor: '#E0E0E0',
+        borderRadius: 4,
+        marginTop: 6,
+        overflow: 'hidden',
+    },
+    progressBarFill: {
+        height: '100%',
+        backgroundColor: '#2D3436',
+        borderRadius: 4,
+    },
+    // Analytics Card
+    analyticsCard: {
+        marginHorizontal: 16,
+        borderRadius: 20,
+        padding: 20,
+        borderWidth: 3,
+        borderColor: '#2D3436',
+        backgroundColor: '#FFFFFF',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.1,
+        shadowRadius: 8,
+        elevation: 4,
+        marginBottom: 16,
+    },
+    analyticsHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 16,
+        gap: 8,
+    },
+    analyticsTitle: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        color: '#D14343',
+    },
+    struggleItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFF0F0',
+        padding: 12,
+        borderRadius: 12,
+        marginBottom: 8,
+    },
+    struggleIcon: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: '#FFE0E0',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    struggleInfo: {
+        flex: 1,
+        marginLeft: 12,
+    },
+    struggleName: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#2D3436',
+    },
+    struggleScore: {
+        fontSize: 12,
+        color: '#FF6B6B',
+        marginTop: 2,
+    },
+    reviewButton: {
+        backgroundColor: '#FF6B6B',
+        paddingHorizontal: 14,
+        paddingVertical: 6,
+        borderRadius: 12,
+    },
+    reviewButtonText: {
+        color: '#fff',
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    noStruggleContainer: {
+        alignItems: 'center',
+        paddingVertical: 16,
+    },
+    noStruggleEmoji: {
+        fontSize: 32,
+        marginBottom: 8,
+    },
+    noStruggleText: {
+        fontSize: 14,
+        color: '#00B894',
+        fontWeight: '600',
+    },
+    // Announcements Section
+    announcementSection: {
+        marginHorizontal: 16,
+    },
+    sectionHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 12,
+        gap: 8,
+    },
+    sectionTitle: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        color: '#fff',
+        textShadowColor: 'rgba(0, 0, 0, 0.3)',
+        textShadowOffset: { width: 1, height: 1 },
+        textShadowRadius: 2,
+    },
+    announcementList: {
+        gap: 16,
+    },
+    announcementWrapper: {
+        position: 'relative',
+        marginLeft: 10,
+    },
+    speechPointer: {
+        position: 'absolute',
+        left: -10,
+        top: 18,
+        width: 0,
+        height: 0,
+        borderTopWidth: 8,
+        borderBottomWidth: 8,
+        borderRightWidth: 12,
+        borderTopColor: 'transparent',
+        borderBottomColor: 'transparent',
+        borderRightColor: '#2D3436',
+        zIndex: 1,
+    },
+    announcementItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 14,
+        paddingHorizontal: 16,
+        backgroundColor: '#FFFFFF',
+        borderRadius: 25,
+        borderWidth: 3,
+        borderColor: '#2D3436',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.1,
+        shadowRadius: 8,
+        elevation: 4,
+    },
+    announcementIcon: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: '#FFFFFF',
+        borderWidth: 2,
+        borderColor: '#2D3436',
+    },
+    announcementContent: {
+        flex: 1,
+        marginLeft: 12,
+    },
+    announcementTitle: {
+        fontSize: 14,
+        color: '#2D3436',
+        lineHeight: 20,
+    },
+    teacherName: {
+        fontWeight: 'bold',
+    },
+    announcementMessage: {
+        fontSize: 13,
+        color: '#636E72',
+        fontWeight: '600',
+        marginTop: 2,
+    },
+    announcementDate: {
+        fontSize: 12,
+        color: '#B2BEC3',
+        marginTop: 4,
+    },
+    emptyAnnouncement: {
+        padding: 24,
+        alignItems: 'center',
+        backgroundColor: '#FFFFFF',
+        borderRadius: 25,
+        borderWidth: 3,
+        borderColor: '#2D3436',
+    },
+    emptyAnnouncementText: {
+        fontSize: 14,
+        color: '#B2BEC3',
     },
 });

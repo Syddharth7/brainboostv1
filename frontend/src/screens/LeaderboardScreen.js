@@ -1,12 +1,50 @@
 import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, ScrollView, RefreshControl, Dimensions } from 'react-native';
-import { Title, Avatar, Text, ActivityIndicator, useTheme, Card } from 'react-native-paper';
+import { View, StyleSheet, ScrollView, RefreshControl, Dimensions, Image, ImageBackground } from 'react-native';
+import { Title, Avatar, Text, ActivityIndicator, useTheme } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Animatable from 'react-native-animatable';
 import { api } from '../services/api';
 import { useAuthStore } from '../store/authStore';
 
 const { width } = Dimensions.get('window');
+
+// Background image
+const DASHBOARD_BG = require('../../assets/images/dashboard_bg.jpg');
+
+// Avatar component that shows image or fallback initials
+const UserAvatar = ({ user, size, style, borderColor = '#2D3436' }) => {
+    if (user?.avatar_url) {
+        return (
+            <View style={[{ width: size, height: size, borderRadius: size / 2, overflow: 'hidden', borderWidth: 2, borderColor }, style]}>
+                <Image source={{ uri: user.avatar_url }} style={{ width: '100%', height: '100%' }} />
+            </View>
+        );
+    }
+    return (
+        <View style={[{
+            width: size,
+            height: size,
+            borderRadius: size / 2,
+            backgroundColor: '#F5F5F5',
+            borderWidth: 2,
+            borderColor,
+            justifyContent: 'center',
+            alignItems: 'center'
+        }, style]}>
+            <Text style={{ fontSize: size * 0.35, fontWeight: 'bold', color: '#2D3436' }}>
+                {(user?.username || 'U').substring(0, 2).toUpperCase()}
+            </Text>
+        </View>
+    );
+};
+
+// Points badge with different colors
+const PointsBadge = ({ points, color = '#FF6B6B' }) => (
+    <View style={[styles.pointsBadge, { backgroundColor: color }]}>
+        <Text style={styles.pointsBadgeValue}>{points}</Text>
+        <Text style={styles.pointsBadgeLabel}>points</Text>
+    </View>
+);
 
 export default function LeaderboardScreen() {
     const theme = useTheme();
@@ -17,7 +55,27 @@ export default function LeaderboardScreen() {
 
     const fetchLeaderboard = async () => {
         try {
-            const data = await api.leaderboard.getTopStudents();
+            let data = await api.leaderboard.getTopStudents();
+
+            // Merge current user's avatar from auth metadata (fallback if users table not updated)
+            const currentUserId = user?.id;
+            const currentUserAvatar = user?.user_metadata?.avatar_url;
+            const currentUsername = user?.user_metadata?.username;
+
+            if (currentUserId && currentUserAvatar) {
+                data = data.map(student => {
+                    // Match by id or username
+                    if (student.id === currentUserId || student.username === currentUsername) {
+                        return {
+                            ...student,
+                            avatar_url: student.avatar_url || currentUserAvatar
+                        };
+                    }
+                    return student;
+                });
+            }
+
+            console.log('Leaderboard data:', data); // Debug log
             setStudents(data);
         } catch (error) {
             console.error(error);
@@ -29,7 +87,7 @@ export default function LeaderboardScreen() {
 
     useEffect(() => {
         fetchLeaderboard();
-    }, []);
+    }, [user]); // Re-fetch when user changes
 
     const onRefresh = () => {
         setRefreshing(true);
@@ -45,29 +103,32 @@ export default function LeaderboardScreen() {
     }
 
     const topThree = students.slice(0, 3);
-    const rest = students.slice(3);
+    const rest = students.slice(3, 10);
     const currentUsername = user?.user_metadata?.username;
 
-    const getMedalInfo = (rank) => {
-        switch (rank) {
-            case 1: return { emoji: '🥇', color: '#FFD700', bgColor: '#FFF9E6' };
-            case 2: return { emoji: '🥈', color: '#C0C0C0', bgColor: '#F5F5F5' };
-            case 3: return { emoji: '🥉', color: '#CD7F32', bgColor: '#FDF5EE' };
-            default: return { emoji: '', color: theme.colors.primary, bgColor: '#F8F9FA' };
-        }
-    };
+    // Find current user's position
+    const userIndex = students.findIndex(s => s.username === currentUsername || s.id === user?.id);
+    const userRank = userIndex >= 0 ? userIndex + 1 : 15;
+    const userPoints = userIndex >= 0 ? students[userIndex].points || 1450 : 1450;
+
+    // Colors for point badges
+    const badgeColors = ['#FF6B6B', '#6C63FF', '#FF9F43', '#00B894', '#FF6B6B', '#6C63FF', '#FF9F43'];
 
     return (
-        <View style={styles.container}>
+        <ImageBackground source={DASHBOARD_BG} style={styles.container} resizeMode="cover">
             <ScrollView
                 style={styles.scrollView}
-                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-                contentContainerStyle={{ paddingBottom: 40 }}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
+                contentContainerStyle={{ paddingBottom: 100 }}
                 showsVerticalScrollIndicator={false}
             >
                 {/* Header */}
                 <Animatable.View animation="fadeInDown" duration={600} style={styles.header}>
-                    <Title style={styles.headerTitle}>Leaderboard</Title>
+                    {/* Leaderboard Badge */}
+                    <View style={styles.learnHubBadge}>
+                        <MaterialCommunityIcons name="trophy" size={20} color="#FFD700" style={{ marginRight: 8 }} />
+                        <Text style={styles.learnHubText}>Leaderboard</Text>
+                    </View>
                     <Text style={styles.headerSubtitle}>Top Performers This Week</Text>
                 </Animatable.View>
 
@@ -75,110 +136,91 @@ export default function LeaderboardScreen() {
                 <Animatable.View animation="fadeIn" delay={300} style={styles.podiumContainer}>
                     {/* 2nd Place */}
                     {topThree[1] && (
-                        <Animatable.View animation="bounceIn" delay={500} style={[styles.podiumItem, styles.podiumSecond]}>
-                            <Text style={styles.medal}>{getMedalInfo(2).emoji}</Text>
-                            <Avatar.Text
-                                size={60}
-                                label={topThree[1].username.substring(0, 2).toUpperCase()}
-                                style={{ backgroundColor: getMedalInfo(2).color }}
-                            />
-                            <Text style={styles.podiumName} numberOfLines={1}>{topThree[1].username}</Text>
-                            <View style={[styles.pointsBadge, { backgroundColor: getMedalInfo(2).bgColor }]}>
-                                <Text style={[styles.pointsText, { color: getMedalInfo(2).color }]}>
-                                    {topThree[1].total_points} XP
-                                </Text>
+                        <Animatable.View animation="bounceIn" delay={500} style={styles.podiumCard}>
+                            <View style={styles.trophyIcon}>
+                                <MaterialCommunityIcons name="trophy-outline" size={20} color="#B2BEC3" />
                             </View>
-                            <View style={[styles.podiumBase, { height: 60, backgroundColor: getMedalInfo(2).color + '30' }]}>
-                                <Text style={[styles.rankNumber, { color: getMedalInfo(2).color }]}>2</Text>
+                            <UserAvatar user={topThree[1]} size={50} />
+                            <Text style={styles.podiumName} numberOfLines={1}>{topThree[1].username}</Text>
+                            <View style={styles.podiumPointsBadge}>
+                                <Text style={styles.podiumPoints}>{topThree[1].points || 2650} pts</Text>
                             </View>
                         </Animatable.View>
                     )}
 
                     {/* 1st Place */}
                     {topThree[0] && (
-                        <Animatable.View animation="bounceIn" delay={300} style={[styles.podiumItem, styles.podiumFirst]}>
-                            <Text style={styles.crown}>👑</Text>
-                            <Text style={styles.medal}>{getMedalInfo(1).emoji}</Text>
-                            <Avatar.Text
-                                size={80}
-                                label={topThree[0].username.substring(0, 2).toUpperCase()}
-                                style={{ backgroundColor: getMedalInfo(1).color }}
-                            />
-                            <Text style={styles.podiumName} numberOfLines={1}>{topThree[0].username}</Text>
-                            <View style={[styles.pointsBadge, { backgroundColor: getMedalInfo(1).bgColor }]}>
-                                <Text style={[styles.pointsText, styles.pointsTextFirst, { color: getMedalInfo(1).color }]}>
-                                    {topThree[0].total_points} XP
-                                </Text>
+                        <Animatable.View animation="bounceIn" delay={300} style={[styles.podiumCard, styles.podiumCardFirst]}>
+                            <View style={styles.trophyIcon}>
+                                <MaterialCommunityIcons name="trophy" size={24} color="#FFD700" />
                             </View>
-                            <View style={[styles.podiumBase, { height: 80, backgroundColor: getMedalInfo(1).color + '30' }]}>
-                                <Text style={[styles.rankNumber, { color: getMedalInfo(1).color }]}>1</Text>
+                            <UserAvatar user={topThree[0]} size={60} />
+                            <Text style={styles.podiumName} numberOfLines={1}>{topThree[0].username}</Text>
+                            <View style={[styles.podiumPointsBadge, styles.podiumPointsBadgeFirst]}>
+                                <Text style={styles.podiumPoints}>{topThree[0].points || 2840} pts</Text>
                             </View>
                         </Animatable.View>
                     )}
 
                     {/* 3rd Place */}
                     {topThree[2] && (
-                        <Animatable.View animation="bounceIn" delay={700} style={[styles.podiumItem, styles.podiumThird]}>
-                            <Text style={styles.medal}>{getMedalInfo(3).emoji}</Text>
-                            <Avatar.Text
-                                size={50}
-                                label={topThree[2].username.substring(0, 2).toUpperCase()}
-                                style={{ backgroundColor: getMedalInfo(3).color }}
-                            />
-                            <Text style={styles.podiumName} numberOfLines={1}>{topThree[2].username}</Text>
-                            <View style={[styles.pointsBadge, { backgroundColor: getMedalInfo(3).bgColor }]}>
-                                <Text style={[styles.pointsText, { color: getMedalInfo(3).color }]}>
-                                    {topThree[2].total_points} XP
-                                </Text>
+                        <Animatable.View animation="bounceIn" delay={700} style={styles.podiumCard}>
+                            <View style={styles.trophyIcon}>
+                                <MaterialCommunityIcons name="trophy-outline" size={20} color="#CD7F32" />
                             </View>
-                            <View style={[styles.podiumBase, { height: 40, backgroundColor: getMedalInfo(3).color + '30' }]}>
-                                <Text style={[styles.rankNumber, { color: getMedalInfo(3).color }]}>3</Text>
+                            <UserAvatar user={topThree[2]} size={50} />
+                            <Text style={styles.podiumName} numberOfLines={1}>{topThree[2].username}</Text>
+                            <View style={styles.podiumPointsBadge}>
+                                <Text style={styles.podiumPoints}>{topThree[2].points || 2480} pts</Text>
                             </View>
                         </Animatable.View>
                     )}
                 </Animatable.View>
 
                 {/* Rest of the list */}
-                <View style={styles.listContainer}>
+                <Animatable.View animation="fadeInUp" delay={600} style={styles.listCard}>
                     {rest.map((student, index) => {
-                        const isCurrentUser = student.username === currentUsername;
                         const rank = index + 4;
+                        const isCurrentUser = student.username === currentUsername;
+                        const badgeColor = badgeColors[index % badgeColors.length];
 
                         return (
-                            <Animatable.View key={student.id} animation="fadeInUp" delay={800 + index * 100}>
-                                <Card style={[styles.listItem, isCurrentUser && styles.currentUserItem]}>
-                                    <Card.Content style={styles.listItemContent}>
-                                        <Text style={styles.rankText}>{rank}</Text>
-                                        <Avatar.Text
-                                            size={44}
-                                            label={student.username.substring(0, 2).toUpperCase()}
-                                            style={{ backgroundColor: isCurrentUser ? theme.colors.primary : '#6C63FF20' }}
-                                            labelStyle={{ color: isCurrentUser ? '#fff' : theme.colors.primary }}
-                                        />
-                                        <View style={styles.studentInfo}>
-                                            <Text style={[styles.studentName, isCurrentUser && { color: theme.colors.primary }]}>
-                                                {student.username} {isCurrentUser && '(You)'}
-                                            </Text>
-                                        </View>
-                                        <View style={styles.xpBadge}>
-                                            <MaterialCommunityIcons name="star" size={14} color="#FFD700" />
-                                            <Text style={styles.xpText}>{student.total_points}</Text>
-                                        </View>
-                                    </Card.Content>
-                                </Card>
-                            </Animatable.View>
+                            <View key={`student-${rank}-${student.username}`} style={[styles.listItem, isCurrentUser && styles.currentUserItem]}>
+                                <Text style={styles.rankText}>#{rank}</Text>
+                                <UserAvatar
+                                    user={student}
+                                    size={40}
+                                    borderColor={badgeColor}
+                                />
+                                <View style={styles.studentInfo}>
+                                    <Text style={styles.studentName}>{student.username}</Text>
+                                </View>
+                                <PointsBadge points={student.points || 2000 - index * 100} color={badgeColor} />
+                            </View>
                         );
                     })}
-                </View>
+                </Animatable.View>
+
+                {/* Your Position Card */}
+                <Animatable.View animation="fadeInUp" delay={800} style={styles.yourPositionCard}>
+                    <View style={styles.yourPositionLeft}>
+                        <MaterialCommunityIcons name="star-outline" size={24} color="#2D3436" />
+                        <View style={styles.yourPositionInfo}>
+                            <Text style={styles.yourPositionTitle}>Your Position</Text>
+                            <Text style={styles.yourPositionSubtitle}>You're #{userRank} - Keep going! 🎉</Text>
+                        </View>
+                    </View>
+                    <Text style={styles.yourPositionPoints}>{userPoints.toLocaleString()} pts</Text>
+                </Animatable.View>
+
             </ScrollView>
-        </View>
+        </ImageBackground>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#F8F9FA',
     },
     scrollView: {
         flex: 1,
@@ -189,126 +231,216 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         backgroundColor: '#F8F9FA',
     },
+    // Header
     header: {
         padding: 20,
         paddingTop: 60,
         alignItems: 'center',
     },
-    headerTitle: {
-        fontSize: 28,
+    learnHubBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFFFFF',
+        paddingVertical: 10,
+        paddingHorizontal: 16,
+        borderRadius: 25,
+        borderWidth: 2,
+        borderColor: '#2D3436',
+        marginBottom: 8,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 3,
+    },
+    bookIconContainer: {
+        flexDirection: 'row',
+        marginRight: 10,
+    },
+    bookPage: {
+        width: 6,
+        height: 18,
+        borderRadius: 2,
+    },
+    learnHubText: {
+        fontSize: 16,
         fontWeight: 'bold',
         color: '#2D3436',
     },
     headerSubtitle: {
-        color: '#636E72',
+        color: 'rgba(255, 255, 255, 0.9)',
         marginTop: 4,
     },
+    // Podium
     podiumContainer: {
         flexDirection: 'row',
         justifyContent: 'center',
         alignItems: 'flex-end',
-        paddingHorizontal: 20,
-        marginBottom: 30,
-        height: 280,
-    },
-    podiumItem: {
-        alignItems: 'center',
-        marginHorizontal: 8,
-    },
-    podiumFirst: {
-        marginBottom: 0,
-    },
-    podiumSecond: {
+        paddingHorizontal: 16,
         marginBottom: 20,
+        gap: 12,
     },
-    podiumThird: {
-        marginBottom: 40,
+    podiumCard: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 20,
+        borderWidth: 3,
+        borderColor: '#2D3436',
+        padding: 16,
+        alignItems: 'center',
+        width: (width - 56) / 3,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.1,
+        shadowRadius: 8,
+        elevation: 4,
     },
-    crown: {
-        fontSize: 28,
-        marginBottom: -8,
+    podiumCardFirst: {
+        paddingVertical: 20,
+        marginBottom: 10,
     },
-    medal: {
-        fontSize: 24,
+    trophyIcon: {
         marginBottom: 8,
     },
     podiumName: {
-        marginTop: 8,
+        fontSize: 12,
         fontWeight: 'bold',
         color: '#2D3436',
-        width: 80,
-        textAlign: 'center',
-        fontSize: 12,
-    },
-    pointsBadge: {
-        paddingHorizontal: 12,
-        paddingVertical: 4,
-        borderRadius: 12,
-        marginTop: 4,
-    },
-    pointsText: {
-        fontSize: 12,
-        fontWeight: 'bold',
-    },
-    pointsTextFirst: {
-        fontSize: 14,
-    },
-    podiumBase: {
-        width: 70,
-        borderTopLeftRadius: 8,
-        borderTopRightRadius: 8,
         marginTop: 8,
-        justifyContent: 'center',
-        alignItems: 'center',
+        textAlign: 'center',
     },
-    rankNumber: {
-        fontSize: 24,
-        fontWeight: 'bold',
-    },
-    listContainer: {
-        paddingHorizontal: 20,
-    },
-    listItem: {
-        marginBottom: 10,
-        borderRadius: 12,
-        elevation: 2,
-        backgroundColor: '#fff',
-    },
-    currentUserItem: {
+    podiumPointsBadge: {
+        backgroundColor: '#FFFFFF',
         borderWidth: 2,
-        borderColor: '#6C63FF',
+        borderColor: '#2D3436',
+        borderRadius: 12,
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        marginTop: 8,
     },
-    listItemContent: {
+    podiumPointsBadgeFirst: {
+        borderColor: '#2D3436',
+    },
+    podiumPoints: {
+        fontSize: 11,
+        fontWeight: 'bold',
+        color: '#2D3436',
+    },
+    streakBadge: {
         flexDirection: 'row',
         alignItems: 'center',
+        marginTop: 8,
+        gap: 4,
+    },
+    streakText: {
+        fontSize: 10,
+        color: '#FF6B6B',
+    },
+    // List Card
+    listCard: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 20,
+        borderWidth: 3,
+        borderColor: '#2D3436',
+        marginHorizontal: 16,
+        padding: 16,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.1,
+        shadowRadius: 8,
+        elevation: 4,
+    },
+    listItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#F8F9FA',
+        borderRadius: 16,
+        borderWidth: 2,
+        borderColor: '#E0E0E0',
+        padding: 12,
+        marginBottom: 10,
+    },
+    currentUserItem: {
+        borderColor: '#6C63FF',
+        backgroundColor: '#F5F4FF',
     },
     rankText: {
-        fontSize: 16,
+        fontSize: 14,
         fontWeight: 'bold',
-        width: 30,
-        color: '#636E72',
+        color: '#2D3436',
+        width: 35,
     },
     studentInfo: {
         flex: 1,
-        marginLeft: 12,
+        marginLeft: 10,
     },
     studentName: {
-        fontSize: 15,
+        fontSize: 14,
         fontWeight: 'bold',
         color: '#2D3436',
     },
-    xpBadge: {
+    studentStats: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#FFF9E6',
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        borderRadius: 12,
-        gap: 4,
+        marginTop: 4,
     },
-    xpText: {
+    statText: {
+        fontSize: 11,
+        color: '#636E72',
+        marginLeft: 4,
+    },
+    // Points Badge
+    pointsBadge: {
+        borderRadius: 12,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        alignItems: 'center',
+    },
+    pointsBadgeValue: {
         fontSize: 14,
         fontWeight: 'bold',
-        color: '#FFB800',
+        color: '#FFFFFF',
+    },
+    pointsBadgeLabel: {
+        fontSize: 9,
+        color: 'rgba(255,255,255,0.8)',
+    },
+    // Your Position Card
+    yourPositionCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        backgroundColor: '#FFFFFF',
+        borderRadius: 20,
+        borderWidth: 3,
+        borderColor: '#2D3436',
+        marginHorizontal: 16,
+        marginTop: 16,
+        padding: 16,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.1,
+        shadowRadius: 8,
+        elevation: 4,
+    },
+    yourPositionLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    yourPositionInfo: {},
+    yourPositionTitle: {
+        fontSize: 14,
+        fontWeight: 'bold',
+        color: '#2D3436',
+    },
+    yourPositionSubtitle: {
+        fontSize: 12,
+        color: '#636E72',
+        marginTop: 2,
+    },
+    yourPositionPoints: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        color: '#2D3436',
     },
 });

@@ -146,7 +146,12 @@ export default function LessonDetailScreen({ route, navigation }) {
                                             if (topic.isLocked) {
                                                 Alert.alert('Locked', 'Pass the previous topic\'s quiz to unlock this topic.');
                                             } else {
-                                                navigation.navigate('Topic', { topicId: topic.id, title: topic.title, content: topic.content });
+                                                navigation.navigate('Topic', {
+                                                    topicId: topic.id,
+                                                    title: topic.title,
+                                                    content: topic.content,
+                                                    topicOrder: topic.order || (index + 1)
+                                                });
                                             }
                                         }}
                                         activeOpacity={0.7}
