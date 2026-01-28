@@ -13,13 +13,21 @@ export default function RegisterScreen({ navigation }) {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [username, setUsername] = useState('');
+    const [section, setSection] = useState('');
+    const [showSectionPicker, setShowSectionPicker] = useState(false);
     const [loading, setLoading] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
     const theme = useTheme();
 
+    const sections = ['Section A', 'Section B', 'Section C', 'Section D'];
+
     async function signUpWithEmail() {
         if (!username || !email || !password) {
             Alert.alert('Error', 'Please fill in all fields');
+            return;
+        }
+        if (!section) {
+            Alert.alert('Error', 'Please select your section');
             return;
         }
         if (password.length < 6) {
@@ -33,6 +41,7 @@ export default function RegisterScreen({ navigation }) {
             options: {
                 data: {
                     username: username,
+                    section: section,
                 },
             },
         });
@@ -123,6 +132,52 @@ export default function RegisterScreen({ navigation }) {
                                     />
                                 </TouchableOpacity>
                             </View>
+
+                            {/* Section Picker */}
+                            <TouchableOpacity
+                                style={styles.inputContainer}
+                                onPress={() => setShowSectionPicker(!showSectionPicker)}
+                            >
+                                <MaterialCommunityIcons name="account-group-outline" size={20} color="#6C63FF" style={styles.inputIcon} />
+                                <Text style={[styles.pickerText, !section && styles.placeholderText]}>
+                                    {section || 'Select your section'}
+                                </Text>
+                                <MaterialCommunityIcons
+                                    name={showSectionPicker ? "chevron-up" : "chevron-down"}
+                                    size={20}
+                                    color="#999"
+                                    style={styles.chevronIcon}
+                                />
+                            </TouchableOpacity>
+
+                            {/* Section Options */}
+                            {showSectionPicker && (
+                                <View style={styles.sectionOptions}>
+                                    {sections.map((sec) => (
+                                        <TouchableOpacity
+                                            key={sec}
+                                            style={[
+                                                styles.sectionOption,
+                                                section === sec && styles.sectionOptionSelected
+                                            ]}
+                                            onPress={() => {
+                                                setSection(sec);
+                                                setShowSectionPicker(false);
+                                            }}
+                                        >
+                                            <Text style={[
+                                                styles.sectionOptionText,
+                                                section === sec && styles.sectionOptionTextSelected
+                                            ]}>
+                                                {sec}
+                                            </Text>
+                                            {section === sec && (
+                                                <MaterialCommunityIcons name="check" size={18} color="#6C63FF" />
+                                            )}
+                                        </TouchableOpacity>
+                                    ))}
+                                </View>
+                            )}
 
                             {/* Sign Up Button */}
                             <TouchableOpacity
@@ -274,5 +329,46 @@ const styles = StyleSheet.create({
         color: '#6C63FF',
         fontSize: 14,
         fontWeight: 'bold',
+    },
+    // Section Picker
+    pickerText: {
+        flex: 1,
+        fontSize: 16,
+        color: '#2D3436',
+        paddingVertical: 12,
+    },
+    placeholderText: {
+        color: '#999',
+    },
+    chevronIcon: {
+        marginLeft: 8,
+    },
+    sectionOptions: {
+        backgroundColor: '#F8F9FA',
+        borderRadius: 12,
+        borderWidth: 2,
+        borderColor: '#E0E0E0',
+        marginBottom: 12,
+        overflow: 'hidden',
+    },
+    sectionOption: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: '#E0E0E0',
+    },
+    sectionOptionSelected: {
+        backgroundColor: '#EEF2FF',
+    },
+    sectionOptionText: {
+        fontSize: 15,
+        color: '#2D3436',
+    },
+    sectionOptionTextSelected: {
+        color: '#6C63FF',
+        fontWeight: '600',
     },
 });

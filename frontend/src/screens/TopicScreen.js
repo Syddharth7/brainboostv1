@@ -60,6 +60,52 @@ const extractKeywords = (content) => {
     return uniqueWords;
 };
 
+// Clean content for text-to-speech (remove HTML, markdown, special chars)
+const cleanContentForSpeech = (content) => {
+    if (!content) return '';
+
+    let cleaned = content;
+
+    // Remove HTML tags
+    cleaned = cleaned.replace(/<[^>]*>/g, ' ');
+
+    // Remove markdown headers (#, ##, ###)
+    cleaned = cleaned.replace(/^#{1,6}\s*/gm, '');
+
+    // Remove markdown bold/italic (**text**, *text*, __text__, _text_)
+    cleaned = cleaned.replace(/\*\*([^*]+)\*\*/g, '$1');
+    cleaned = cleaned.replace(/\*([^*]+)\*/g, '$1');
+    cleaned = cleaned.replace(/__([^_]+)__/g, '$1');
+    cleaned = cleaned.replace(/_([^_]+)_/g, '$1');
+
+    // Remove markdown links [text](url)
+    cleaned = cleaned.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+
+    // Remove markdown code blocks and inline code
+    cleaned = cleaned.replace(/```[\s\S]*?```/g, ' ');
+    cleaned = cleaned.replace(/`([^`]+)`/g, '$1');
+
+    // Remove bullet points and list markers
+    cleaned = cleaned.replace(/^[\s]*[-*•]\s*/gm, '');
+    cleaned = cleaned.replace(/^\d+\.\s*/gm, '');
+
+    // Remove emojis (common emoji unicode ranges)
+    cleaned = cleaned.replace(/[\u{1F300}-\u{1F9FF}]/gu, '');
+    cleaned = cleaned.replace(/[\u{2600}-\u{26FF}]/gu, '');
+    cleaned = cleaned.replace(/[\u{2700}-\u{27BF}]/gu, '');
+
+    // Remove multiple spaces and newlines
+    cleaned = cleaned.replace(/\s+/g, ' ');
+
+    // Trim and limit length (TTS has limits)
+    cleaned = cleaned.trim();
+    if (cleaned.length > 5000) {
+        cleaned = cleaned.substring(0, 5000) + '...';
+    }
+
+    return cleaned;
+};
+
 export default function TopicScreen({ route, navigation }) {
     const { title, content, topicId, estimatedTime, topicOrder = 1 } = route.params || {
         title: 'Topic',
@@ -73,6 +119,7 @@ export default function TopicScreen({ route, navigation }) {
     const { user } = useAuthStore();
     const scrollViewRef = useRef(null);
     const scrollY = useRef(new Animated.Value(0)).current;
+    const hasSpeechStartedRef = useRef(false); // Track if speech already started
 
     // State
     const [quiz, setQuiz] = useState(null);
@@ -112,30 +159,98 @@ export default function TopicScreen({ route, navigation }) {
             setLoadingQuiz(false);
         };
         fetchQuiz();
+    }, [topicId]);
 
-        // Auto-start text-to-speech when entering the screen
-        const startAutoSpeech = async () => {
-            if (content) {
-                setIsSpeaking(true);
-                Speech.speak(content, {
-                    language: 'en',
-                    rate: 0.85,
-                    onDone: () => setIsSpeaking(false),
-                    onStopped: () => setIsSpeaking(false),
-                    onError: () => setIsSpeaking(false)
-                });
+    // Separate useEffect for TTS - with chunking for long content
+    useEffect(() => {
+        if (!content) {
+            console.log('TTS: No content!');
+            return;
+        }
+
+        console.log('TTS: Content received, length:', content.length);
+        let isCancelled = false;
+
+        // Function to split content into chunks at sentence boundaries
+        const splitIntoChunks = (text, maxLength = 2000) => {
+            const chunks = [];
+            let remaining = text;
+
+            while (remaining.length > 0) {
+                if (remaining.length <= maxLength) {
+                    chunks.push(remaining);
+                    break;
+                }
+
+                // Find a good break point (end of sentence)
+                let breakPoint = remaining.lastIndexOf('. ', maxLength);
+                if (breakPoint === -1 || breakPoint < maxLength / 2) {
+                    breakPoint = remaining.lastIndexOf(' ', maxLength);
+                }
+                if (breakPoint === -1) {
+                    breakPoint = maxLength;
+                }
+
+                chunks.push(remaining.substring(0, breakPoint + 1).trim());
+                remaining = remaining.substring(breakPoint + 1).trim();
             }
+
+            return chunks;
         };
 
-        // Small delay to let the screen load first
-        const timer = setTimeout(startAutoSpeech, 500);
+        // Function to speak chunks sequentially
+        const speakChunks = (chunks, index = 0) => {
+            if (isCancelled || index >= chunks.length) {
+                console.log('TTS: All chunks done');
+                setIsSpeaking(false);
+                return;
+            }
+
+            console.log(`TTS: Speaking chunk ${index + 1}/${chunks.length}, length: ${chunks[index].length}`);
+
+            Speech.speak(chunks[index], {
+                language: 'en',
+                rate: 0.85,
+                onDone: () => {
+                    if (!isCancelled) {
+                        speakChunks(chunks, index + 1);
+                    }
+                },
+                onStopped: () => {
+                    console.log('TTS: Stopped by user');
+                    setIsSpeaking(false);
+                },
+                onError: (err) => {
+                    console.log('TTS: Chunk error:', err);
+                    // Try next chunk anyway
+                    speakChunks(chunks, index + 1);
+                }
+            });
+        };
+
+        // Start TTS after delay
+        const testTimer = setTimeout(() => {
+            if (isCancelled) return;
+
+            const cleanedContent = cleanContentForSpeech(content);
+            console.log('TTS: Cleaned content length:', cleanedContent.length);
+
+            if (cleanedContent && cleanedContent.length > 0) {
+                setIsSpeaking(true);
+                const chunks = splitIntoChunks(cleanedContent);
+                console.log(`TTS: Split into ${chunks.length} chunks`);
+                speakChunks(chunks);
+            } else {
+                console.log('TTS: Cleaned content is empty!');
+            }
+        }, 500);
 
         return () => {
-            // Stop speech when leaving screen
-            clearTimeout(timer);
+            isCancelled = true;
+            clearTimeout(testTimer);
             Speech.stop();
         };
-    }, [topicId, content]);
+    }, [content]);
 
     // Check if content is fully read and award XP
     useEffect(() => {
@@ -175,14 +290,20 @@ export default function TopicScreen({ route, navigation }) {
             await Speech.stop();
             setIsSpeaking(false);
         } else {
-            setIsSpeaking(true);
-            Speech.speak(content, {
-                language: 'en',
-                rate: 0.9,
-                onDone: () => setIsSpeaking(false),
-                onStopped: () => setIsSpeaking(false),
-                onError: () => setIsSpeaking(false)
-            });
+            const cleanedContent = cleanContentForSpeech(content);
+            if (cleanedContent) {
+                setIsSpeaking(true);
+                Speech.speak(cleanedContent, {
+                    language: 'en',
+                    rate: 0.9,
+                    onDone: () => setIsSpeaking(false),
+                    onStopped: () => setIsSpeaking(false),
+                    onError: (error) => {
+                        console.error('TTS Error:', error);
+                        setIsSpeaking(false);
+                    }
+                });
+            }
         }
     };
 

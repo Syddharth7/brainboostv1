@@ -19,6 +19,336 @@ export const api = {
             if (error) throw error;
             return data;
         },
+        create: async (title, category, description, order) => {
+            const { data, error } = await supabase
+                .from('lessons')
+                .insert([{ title, category, description, order }])
+                .select()
+                .single();
+            if (error) throw error;
+            return data;
+        },
+        update: async (id, updates) => {
+            const { data, error } = await supabase
+                .from('lessons')
+                .update(updates)
+                .eq('id', id)
+                .select()
+                .single();
+            if (error) throw error;
+            return data;
+        },
+        delete: async (id) => {
+            const { error } = await supabase
+                .from('lessons')
+                .delete()
+                .eq('id', id);
+            if (error) throw error;
+            return true;
+        },
+    },
+    topics: {
+        getByLessonId: async (lessonId) => {
+            const { data, error } = await supabase
+                .from('topics')
+                .select('*')
+                .eq('lesson_id', lessonId)
+                .order('order', { ascending: true });
+            if (error) throw error;
+            return data;
+        },
+        getById: async (id) => {
+            const { data, error } = await supabase
+                .from('topics')
+                .select('*')
+                .eq('id', id)
+                .single();
+            if (error) throw error;
+            return data;
+        },
+        create: async (lessonId, title, content, order, estimatedTime) => {
+            const { data, error } = await supabase
+                .from('topics')
+                .insert([{ lesson_id: lessonId, title, content, order, estimated_time: estimatedTime }])
+                .select()
+                .single();
+            if (error) throw error;
+            return data;
+        },
+        update: async (id, updates) => {
+            const { data, error } = await supabase
+                .from('topics')
+                .update(updates)
+                .eq('id', id)
+                .select()
+                .single();
+            if (error) throw error;
+            return data;
+        },
+        delete: async (id) => {
+            const { error } = await supabase
+                .from('topics')
+                .delete()
+                .eq('id', id);
+            if (error) throw error;
+            return true;
+        },
+    },
+    quizzesAdmin: {
+        getByTopicId: async (topicId) => {
+            const { data, error } = await supabase
+                .from('quizzes')
+                .select('*, quiz_questions(*)')
+                .eq('topic_id', topicId);
+            if (error) throw error;
+            return data;
+        },
+        getById: async (id) => {
+            const { data, error } = await supabase
+                .from('quizzes')
+                .select('*, quiz_questions(*)')
+                .eq('id', id)
+                .single();
+            if (error) throw error;
+            return data;
+        },
+        create: async (topicId, title, passingScore = 70) => {
+            const { data, error } = await supabase
+                .from('quizzes')
+                .insert([{ topic_id: topicId, title, passing_score: passingScore }])
+                .select()
+                .single();
+            if (error) throw error;
+            return data;
+        },
+        update: async (id, updates) => {
+            const { data, error } = await supabase
+                .from('quizzes')
+                .update(updates)
+                .eq('id', id)
+                .select()
+                .single();
+            if (error) throw error;
+            return data;
+        },
+        delete: async (id) => {
+            const { error } = await supabase
+                .from('quizzes')
+                .delete()
+                .eq('id', id);
+            if (error) throw error;
+            return true;
+        },
+    },
+    quizQuestions: {
+        getByQuizId: async (quizId) => {
+            const { data, error } = await supabase
+                .from('quiz_questions')
+                .select('*')
+                .eq('quiz_id', quizId)
+                .order('order', { ascending: true });
+            if (error) throw error;
+            return data;
+        },
+        create: async (quizId, questionText, options, correctAnswer, order) => {
+            const { data, error } = await supabase
+                .from('quiz_questions')
+                .insert([{ quiz_id: quizId, question_text: questionText, options, correct_answer: correctAnswer, order }])
+                .select()
+                .single();
+            if (error) throw error;
+            return data;
+        },
+        update: async (id, updates) => {
+            const { data, error } = await supabase
+                .from('quiz_questions')
+                .update(updates)
+                .eq('id', id)
+                .select()
+                .single();
+            if (error) throw error;
+            return data;
+        },
+        delete: async (id) => {
+            const { error } = await supabase
+                .from('quiz_questions')
+                .delete()
+                .eq('id', id);
+            if (error) throw error;
+            return true;
+        },
+    },
+    analytics: {
+        // Get all students with their quiz performance summary
+        getStudentsWithScores: async () => {
+            // Get all students
+            const { data: students, error: studentsError } = await supabase
+                .from('users')
+                .select('id, username, email, section, avatar_url')
+                .eq('role', 'student');
+            if (studentsError) throw studentsError;
+
+            // Get all quiz attempts with quiz and lesson info
+            const { data: attempts, error: attemptsError } = await supabase
+                .from('quiz_attempts')
+                .select(`
+                    user_id,
+                    score,
+                    quiz_id,
+                    quizzes (
+                        id,
+                        title,
+                        topic_id,
+                        topics (
+                            lesson_id,
+                            lessons (
+                                category
+                            )
+                        )
+                    )
+                `);
+            if (attemptsError) throw attemptsError;
+
+            // Calculate scores per student
+            const studentScores = students.map(student => {
+                const studentAttempts = attempts.filter(a => a.user_id === student.id);
+                const totalScore = studentAttempts.reduce((sum, a) => sum + a.score, 0);
+                const avgScore = studentAttempts.length > 0 ? Math.round(totalScore / studentAttempts.length) : 0;
+
+                // Group by category
+                const categoryScores = {};
+                studentAttempts.forEach(attempt => {
+                    const category = attempt.quizzes?.topics?.lessons?.category;
+                    if (category) {
+                        if (!categoryScores[category]) {
+                            categoryScores[category] = { total: 0, count: 0 };
+                        }
+                        categoryScores[category].total += attempt.score;
+                        categoryScores[category].count += 1;
+                    }
+                });
+
+                // Calculate avg per category
+                const categories = Object.entries(categoryScores).map(([name, data]) => ({
+                    name,
+                    score: Math.round(data.total / data.count)
+                }));
+
+                // Find weakest category
+                const weakest = categories.length > 0
+                    ? categories.reduce((min, c) => c.score < min.score ? c : min, categories[0])
+                    : null;
+
+                return {
+                    ...student,
+                    avgScore,
+                    quizCount: studentAttempts.length,
+                    categories,
+                    weakestCategory: weakest
+                };
+            });
+
+            return studentScores;
+        },
+
+        // Get unique sections
+        getSections: async () => {
+            const { data, error } = await supabase
+                .from('users')
+                .select('section')
+                .eq('role', 'student');
+            if (error) throw error;
+
+            const sections = [...new Set(data.map(u => u.section).filter(Boolean))];
+            return sections.sort();
+        },
+
+        // Get detailed progress for a specific student
+        getStudentProgress: async (studentId) => {
+            // Get student info
+            const { data: student, error: studentError } = await supabase
+                .from('users')
+                .select('*')
+                .eq('id', studentId)
+                .single();
+            if (studentError) throw studentError;
+
+            // Get all quiz attempts with full details
+            const { data: attempts, error: attemptsError } = await supabase
+                .from('quiz_attempts')
+                .select(`
+                    *,
+                    quizzes (
+                        id,
+                        title,
+                        passing_score,
+                        topic_id,
+                        topics (
+                            id,
+                            title,
+                            lesson_id,
+                            lessons (
+                                id,
+                                title,
+                                category
+                            )
+                        )
+                    )
+                `)
+                .eq('user_id', studentId)
+                .order('completed_at', { ascending: false });
+            if (attemptsError) throw attemptsError;
+
+            // Calculate category performance
+            const categoryData = {};
+            attempts.forEach(attempt => {
+                const category = attempt.quizzes?.topics?.lessons?.category;
+                if (category) {
+                    if (!categoryData[category]) {
+                        categoryData[category] = {
+                            total: 0,
+                            count: 0,
+                            passed: 0,
+                            quizzes: []
+                        };
+                    }
+                    categoryData[category].total += attempt.score;
+                    categoryData[category].count += 1;
+                    if (attempt.score >= (attempt.quizzes?.passing_score || 70)) {
+                        categoryData[category].passed += 1;
+                    }
+                    categoryData[category].quizzes.push({
+                        id: attempt.quiz_id,
+                        title: attempt.quizzes?.title,
+                        score: attempt.score,
+                        passed: attempt.score >= (attempt.quizzes?.passing_score || 70),
+                        date: attempt.completed_at
+                    });
+                }
+            });
+
+            const categories = Object.entries(categoryData).map(([name, data]) => ({
+                name,
+                avgScore: Math.round(data.total / data.count),
+                quizCount: data.count,
+                passRate: Math.round((data.passed / data.count) * 100),
+                quizzes: data.quizzes
+            })).sort((a, b) => b.avgScore - a.avgScore);
+
+            // Overall stats
+            const totalScore = attempts.reduce((sum, a) => sum + a.score, 0);
+            const avgScore = attempts.length > 0 ? Math.round(totalScore / attempts.length) : 0;
+
+            return {
+                student,
+                avgScore,
+                totalQuizzes: attempts.length,
+                categories,
+                recentAttempts: attempts.slice(0, 10),
+                strengths: categories.filter(c => c.avgScore >= 80),
+                weaknesses: categories.filter(c => c.avgScore < 60)
+            };
+        }
     },
     users: {
         getProfile: async (userId) => {
@@ -91,6 +421,37 @@ export const api = {
         },
         updateStreak: async (userId) => {
             return null;
+        },
+        registerPushToken: async (userId, pushToken) => {
+            const { data, error } = await supabase
+                .from('users')
+                .update({ push_token: pushToken })
+                .eq('id', userId)
+                .select()
+                .single();
+            if (error) throw error;
+            return data;
+        }
+    },
+    students: {
+        getAll: async () => {
+            const { data, error } = await supabase
+                .from('users')
+                .select('*')
+                .eq('role', 'student')
+                .order('section', { ascending: true });
+            if (error) throw error;
+            return data;
+        },
+        getBySection: async (section) => {
+            const { data, error } = await supabase
+                .from('users')
+                .select('*')
+                .eq('role', 'student')
+                .eq('section', section)
+                .order('username', { ascending: true });
+            if (error) throw error;
+            return data;
         }
     },
     topics: {
@@ -123,11 +484,31 @@ export const api = {
             const { data, error } = await supabase
                 .from('quizzes')
                 .select('*, quiz_questions(*)')
-                .eq('lesson_id', lessonId)
-                .limit(1)
-                .maybeSingle();
+                .eq('lesson_id', lessonId);
             if (error) throw error;
-            return data; // Will return null if no quiz found, or first quiz if multiple exist
+            return data || [];
+        },
+        // Get all quizzes for a lesson via its topics
+        getAllByLessonIdViaTopics: async (lessonId) => {
+            // First get all topics for this lesson
+            const { data: topics, error: topicsError } = await supabase
+                .from('topics')
+                .select('id')
+                .eq('lesson_id', lessonId)
+                .order('order', { ascending: true });
+            if (topicsError) throw topicsError;
+
+            if (!topics || topics.length === 0) return [];
+
+            // Get all quizzes linked to these topics
+            const topicIds = topics.map(t => t.id);
+            const { data: quizzes, error: quizzesError } = await supabase
+                .from('quizzes')
+                .select('*, quiz_questions(*)')
+                .in('topic_id', topicIds);
+            if (quizzesError) throw quizzesError;
+
+            return quizzes || [];
         },
         getByTopicId: async (topicId) => {
             const { data, error } = await supabase
@@ -162,6 +543,13 @@ export const api = {
                 .from('quiz_attempts')
                 .select('*')
                 .eq('user_id', userId);
+            if (error) throw error;
+            return data;
+        },
+        getAllQuizProgress: async () => {
+            const { data, error } = await supabase
+                .from('quiz_attempts')
+                .select('*');
             if (error) throw error;
             return data;
         }
@@ -306,6 +694,132 @@ export const api = {
                 level: newLevel,
                 leveledUp: newLevel > (userData?.level || 1)
             };
+        }
+    },
+    announcements: {
+        getAll: async () => {
+            const { data, error } = await supabase
+                .from('announcements')
+                .select('*')
+                .order('created_at', { ascending: false });
+            if (error) throw error;
+            return data;
+        },
+        create: async (title, message, teacherName, createdBy) => {
+            console.log('=== ANNOUNCEMENT CREATE START ===');
+            console.log('Title:', title);
+            console.log('Message:', message);
+
+            // 1. Insert announcement into database
+            const { data: announcement, error: insertError } = await supabase
+                .from('announcements')
+                .insert([{
+                    title,
+                    message,
+                    teacher_name: teacherName,
+                    created_by: createdBy
+                }])
+                .select()
+                .single();
+
+            if (insertError) {
+                console.error('Failed to insert announcement:', insertError);
+                throw insertError;
+            }
+            console.log('Announcement inserted:', announcement?.id);
+
+            // 2. Fetch all student push tokens
+            console.log('Fetching student push tokens...');
+            const { data: users, error: usersError } = await supabase
+                .from('users')
+                .select('id, username, push_token, role')
+                .eq('role', 'student')
+                .not('push_token', 'is', null);
+
+            console.log('Users query result:', {
+                count: users?.length || 0,
+                error: usersError,
+                users: users?.map(u => ({
+                    id: u.id,
+                    username: u.username,
+                    hasToken: !!u.push_token,
+                    tokenPreview: u.push_token?.substring(0, 30) + '...'
+                }))
+            });
+
+            if (usersError) {
+                console.error('Error fetching push tokens:', usersError);
+                return announcement;
+            }
+
+            // 3. Filter valid Expo push tokens
+            const pushTokens = (users || [])
+                .map(u => u.push_token)
+                .filter(token => token && token.startsWith('ExponentPushToken'));
+
+            console.log('Valid push tokens found:', pushTokens.length);
+            console.log('Tokens:', pushTokens);
+
+            if (pushTokens.length === 0) {
+                console.warn('NO PUSH TOKENS FOUND! Students need to log in to register tokens.');
+                return announcement;
+            }
+
+            // 4. Build notification messages
+            const messages = pushTokens.map(token => ({
+                to: token,
+                sound: 'default',
+                title: `📢 ${title}`,
+                body: message,
+                data: { announcementId: announcement.id, type: 'announcement' }
+            }));
+
+            console.log('Sending', messages.length, 'push notifications...');
+            console.log('Messages payload:', JSON.stringify(messages, null, 2));
+
+            // 5. Send to Expo Push API
+            try {
+                const response = await fetch('https://exp.host/--/api/v2/push/send', {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Accept-Encoding': 'gzip, deflate',
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(messages)
+                });
+
+                console.log('Expo API response status:', response.status);
+
+                const pushResult = await response.json();
+                console.log('Expo API response:', JSON.stringify(pushResult, null, 2));
+
+                // Check for errors in the response
+                if (pushResult.data) {
+                    pushResult.data.forEach((result, index) => {
+                        if (result.status === 'error') {
+                            console.error(`Push failed for token ${index}:`, result.message, result.details);
+                        } else {
+                            console.log(`Push success for token ${index}:`, result.id);
+                        }
+                    });
+                }
+
+                console.log('=== ANNOUNCEMENT CREATE END ===');
+            } catch (pushError) {
+                console.error('Push notification error:', pushError);
+                console.error('Error stack:', pushError.stack);
+            }
+
+            return announcement;
+        },
+        delete: async (id) => {
+            const { data, error } = await supabase
+                .from('announcements')
+                .delete()
+                .eq('id', id);
+            if (error) throw error;
+            return data;
         }
     }
 };

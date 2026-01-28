@@ -16,12 +16,19 @@ const WELCOME_IMAGE = require('../../assets/images/welcome_text.png');
 const LESSONS_CARD_IMAGE = require('../../assets/images/lessons_card.jpg');
 const QUIZ_CARD_IMAGE = require('../../assets/images/quiz_card.jpg');
 
-// Sample announcements data (replace with API call later)
-const sampleAnnouncements = [
-    { id: 1, title: 'New Lesson Added', message: 'Check out the new ICT lesson on Web Development!', date: '2 hours ago', teacher: 'Mr. Santos' },
-    { id: 2, title: 'Quiz Reminder', message: 'Don\'t forget to complete the Agriculture quiz by Friday.', date: '1 day ago', teacher: 'Ms. Garcia' },
-    { id: 3, title: 'Holiday Notice', message: 'No classes next Monday due to National Heroes Day.', date: '2 days ago', teacher: 'Admin' },
-];
+// Format date helper
+const formatDate = (dateString) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 60) return `${diffMins} min ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    return `${diffDays}d ago`;
+};
 
 // Floating Card Component with animation
 const FloatingCard = ({ children, delay = 0, style }) => {
@@ -120,13 +127,13 @@ const AnnouncementItem = ({ announcement, index }) => {
                 </View>
                 <View style={styles.announcementContent}>
                     <Text style={styles.announcementTitle}>
-                        <Text style={styles.teacherName}>{announcement.teacher}</Text>
+                        <Text style={styles.teacherName}>{announcement.teacher_name || 'Teacher'}</Text>
                         {' '}{announcement.title.toLowerCase()}
                     </Text>
                     <Text style={styles.announcementMessage} numberOfLines={1}>
                         {announcement.message}
                     </Text>
-                    <Text style={styles.announcementDate}>{announcement.date}</Text>
+                    <Text style={styles.announcementDate}>{formatDate(announcement.created_at)}</Text>
                 </View>
             </View>
         </Animatable.View>
@@ -137,7 +144,7 @@ export default function DashboardScreen({ navigation }) {
     const { user } = useAuthStore();
     const [refreshing, setRefreshing] = useState(false);
     const [strugglingLessons, setStrugglingLessons] = useState([]);
-    const [announcements, setAnnouncements] = useState(sampleAnnouncements);
+    const [announcements, setAnnouncements] = useState([]);
     const [userXP, setUserXP] = useState({ xp: 0, level: 1 });
 
     const username = user?.user_metadata?.username || 'Student';
@@ -150,6 +157,14 @@ export default function DashboardScreen({ navigation }) {
                 setUserXP(xpData);
             } catch (xpError) {
                 console.error('Error fetching XP:', xpError);
+            }
+
+            // Fetch real announcements
+            try {
+                const announcementsData = await api.announcements.getAll();
+                setAnnouncements(announcementsData || []);
+            } catch (annError) {
+                console.error('Error fetching announcements:', annError);
             }
 
             const quizProgress = await api.progress.getUserQuizProgress(user.id);
